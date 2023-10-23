@@ -1,0 +1,14 @@
+        ADDI    R1,R0,#4
+        ADDI    R1,R1,#8
+        LW      R5,10(R1)
+        SUB     R2,R0,R5
+        SUB     R2,R1,R5
+        ADD     R6,R2,R5
+        SW      10(R6),R2
+        LW      R7,10(R6)        
+        BNEZ    R7,exit
+loop    SUBI    R3,R3,#2
+        SUB     R2,R2,R1
+        BNEZ    R3,loop
+exit    ADDI    R4,R2,#10
+        LW      R5,10(R4)

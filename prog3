@@ -1,0 +1,6 @@
+        ADDI    R4,R0,#7000
+Loop    ADDI    R1,R0,#4
+L1      SUBI    R1,R1,#1
+        BNEZ    R1,L1
+        SUBI    R4,R4,#1
+        BNEZ    R4,Loop

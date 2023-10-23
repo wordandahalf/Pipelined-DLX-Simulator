@@ -1,0 +1,10 @@
+        ADDI    R3,R0,#300
+        ADDI    R1,R0,#8
+        ADD     R2,R1,R1
+        SW      0(R2),R1
+        BEQZ    R1,exit
+loop    SUBI    R3,R3,#2
+        SUB     R2,R2,R1
+        BNEZ    R3,loop
+exit    ADDI    R4,R2,#1190
+        LW      R5,10(R4)
