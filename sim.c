@@ -161,7 +161,4 @@ int main(int argc, char **argv) {
         printf("  R%-2d: %-10d  R%-2d: %-10d", i, int_regs[i], i + 1, int_regs[i + 1]);
         printf("  R%-2d: %-10d  R%-2d: %-10d\n", i + 2, int_regs[i + 2], i + 3, int_regs[i + 3]);
     }
-    printf("\nCycles executed: %d\n", cycle);
-    printf("IPC:  %6.3f\n", (float) inst_executed / (float) cycle);
-    printf("CPI:  %6.3f\n", (float) cycle / (float) inst_executed);
 }
