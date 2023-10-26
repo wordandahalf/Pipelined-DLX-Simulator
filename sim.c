@@ -1,127 +1,192 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "globals.h"
+#include "pipeline.h"
 
 // Max cycles simulator will execute -- to stop a runaway simulator
 #define FAIL_SAFE_LIMIT  500000
 
 struct instruction inst_mem[MAX_LINES_OF_CODE];  // instruction memory
-struct instruction IR;                       // instruction register
 int data_mem[MAX_WORDS_OF_DATA];             // data memory
 int int_regs[16];                            // integer register file
-int PC, NPC;                                  // PC and next PC
-int A, B;                                     // ID register read values
-int mem_addr;                                // data memory address
-int Cond;                                    // branch condition test
-int LMD;                                     // data memory output
-int ALU_input1, ALU_input2, ALU_output;        // ALU intputs and output
-int wrote_r0 = 0;                              // register R0 written?
 int code_length;                             // lines of code in inst mem
 int cycle;                                   // simulation cycle count
 int inst_executed;                          // number of instr executed
 
-void Simulate_DLX_Fetch() {
-    /* check if instruction memory access is within bounds */
-    if (PC < 0 || PC >= code_length) {
-        printf("Exception: out-of-bounds inst memory access at PC=%d\n", PC);
-        exit(0);
+void simulate_fetch(cpu_state *state) {
+    fetch_buffer *buffer = &state->fetch;
+
+    // Stall for a single cycle if requested
+    if (buffer->StallF) {
+        buffer->StallF = false;
+        return;
     }
-    IR = inst_mem[PC];    /* read instruction memory */
-    NPC = PC + 1;           /* increment PC */
+
+    const int pc = buffer->PC;
+
+    // Validate the value of PC
+    if (pc < 0 || pc >= code_length) {
+        printf("out-of-bounds instruction memory access at %d\n", pc);
+        exit(-1);
+    }
+
+    // The signal is called "PCPlus4" because in implementation, memory will
+    // be byte addressed. However, the instruction memory of this simulator
+    // contains instruction structs directly, so it should be incremented
+    // by 1.
+    const int PCPlus4 = buffer->PC + 1;
+
+    state->decode.InstD = inst_mem[pc];
+    state->decode.PCPlus4D = PCPlus4;
+
+    // Update the program counter for the next cycle
+    buffer->PC = buffer->PCSrc ? buffer->PCBranch : PCPlus4;
 }
 
-void Simulate_DLX_Decode() {
-    A = int_regs[IR.rs];   /* read registers */
-    B = int_regs[IR.rt];
+void simulate_decode(cpu_state *state) {
+    decode_buffer *buffer = &state->decode;
 
-    /* Calculate branch condition codes
-       and change PC if condition is true */
-    if (IR.op == BEQZ)
-        Cond = (A == 0);         /* condition is true if A is 0 (beqz) */
-    else if (IR.op == BNEZ)
-        Cond = (A != 0);         /* condition is true if A is not 0 (bnez) */
-    else if (IR.op == J)
-        Cond = 1;              /* condition is alway true for jump instructions */
-    else
-        Cond = 0;              /* condition is false for all other instructions */
+    // Stall for a single cycle if requested
+    if (buffer->StallD) {
+        buffer->StallD = false;
+        return;
+    }
 
-    if (Cond)              /* change NPC if condition is true */
-        NPC = NPC + IR.imm;
+    // Access the instruction memory
+    const struct instruction InstrD = state->decode.InstD;
+    const int Rd1 = buffer->InstD.rs,
+              Rd2 = buffer->InstD.rt;
+
+    // Resolve jump instructions
+    bool PCSrcD;
+
+    switch (InstrD.op) {
+        case BEQZ: PCSrcD = Rd1 == 0; break;
+        case BNEZ: PCSrcD = Rd1 != 0; break;
+        case J:    PCSrcD = 1; break;
+    }
+
+    //
+    state->fetch.PCSrc = PCSrcD;
+    state->fetch.PCBranch = (InstrD.imm << 2) + buffer->PCPlus4D;
+
+    state->execute.InstE = InstrD;
+    state->execute.A = Rd1;
+    state->execute.B = Rd2;
 }
 
-void Simulate_DLX_Execute() {
-    /* set ALU inputs */
-    ALU_input1 = A;
+void simulate_execute(cpu_state *state) {
+    const execute_buffer *buffer = &state->execute;
+    const struct instruction InstE = buffer->InstE;
 
-    if (IR.op == ADDI || IR.op == SUBI ||
-        IR.op == LW || IR.op == SW)
-        ALU_input2 = IR.imm;
-    else
-        ALU_input2 = B;
+    int WriteDataE;
+    int SrcAE, SrcBE;
 
-    /* calculate ALU output */
-    if (IR.op == SUB || IR.op == SUBI)
-        ALU_output = ALU_input1 - ALU_input2;
-    else
-        ALU_output = ALU_input1 + ALU_input2;
+    switch (buffer->ForwardAE) {
+        case none:
+            SrcAE = buffer->A;
+        case memory:
+            SrcAE = state->memory.ALUOut;
+            break;
+        case writeback:
+            SrcAE = state->writeback.Result;
+            break;
+    }
+
+    switch (buffer->ForwardAE) {
+        case none:
+            WriteDataE = buffer->B;
+        case memory:
+            WriteDataE = state->memory.ALUOut;
+            break;
+        case writeback:
+            WriteDataE = state->writeback.Result;
+            break;
+    }
+
+    if (InstE.op == ADDI || InstE.op == SUBI ||
+        InstE.op == LW   || InstE.op == SW) {
+        SrcBE = buffer->InstE.imm;
+    } else {
+        SrcBE = WriteDataE;
+    }
+
+    if (InstE.op == SUB || InstE.op == SUBI)
+        state->memory.ALUOut = SrcAE - SrcBE;
+    else if(InstE.op == ADD || InstE.op == ADDI)
+        state->memory.ALUOut = SrcAE + SrcBE;
+
+    state->memory.WriteData = WriteDataE;
+    state->memory.Inst = InstE;
 }
 
-void Simulate_DLX_Memory() {
-    mem_addr = ALU_output;
+void simulate_memory(cpu_state *state) {
+    // TODO: implement stall condition
+    const memory_buffer *buffer = &state->memory;
 
-    /* check if data memory access is within bounds */
-    if (IR.op == LW || IR.op == SW) {
-        if (mem_addr < 0 || mem_addr >= MAX_WORDS_OF_DATA) {
-            printf("Exception: out-of-bounds data memory access at PC=%d\n", PC);
+    const int ALUOutM = buffer->ALUOut;
+    const struct instruction InstM = buffer->Inst;
+
+    if (InstM.op == LW || InstM.op == SW) {
+        if (ALUOutM < 0 || ALUOutM >= MAX_WORDS_OF_DATA) {
+            printf("Exception: out-of-bounds data memory access at %d\n", ALUOutM);
             exit(0);
         }
     }
 
-    if (IR.op == LW)               /* read memory for lw instruction */
-        LMD = data_mem[mem_addr];
-    else if (IR.op == SW)         /* or write to memory for sw instruction */
-        data_mem[mem_addr] = B;
-}
-
-void Simulate_DLX_Writeback() {
-    /* write to register and check if output register is R0 */
-    if (IR.op == ADD || IR.op == SUB) {
-        int_regs[IR.rd] = ALU_output;
-        wrote_r0 = (IR.rd == R0);
-    } else if (IR.op == ADDI || IR.op == SUBI) {
-        int_regs[IR.rt] = ALU_output;
-        wrote_r0 = (IR.rt == R0);
-    } else if (IR.op == LW) {
-        int_regs[IR.rt] = LMD;
-        wrote_r0 = (IR.rt == R0);
+    switch (InstM.op) {
+        case LW:
+            state->writeback.ReadData = data_mem[ALUOutM];
+            break;
+        case SW:
+            data_mem[ALUOutM] = buffer->WriteData;
+            break;
     }
 
+    state->writeback.Inst = InstM;
+    state->writeback.ALUOut = buffer->ALUOut;
+}
+
+void simulate_writeback(cpu_state *state) {
+    writeback_buffer *buffer = &state->writeback;
+    const struct instruction InstW = buffer->Inst;
+
+    int *dest = NULL;
+    int data;
+
+    if (InstW.op == ADD || InstW.op == SUB)
+        dest = &int_regs[InstW.rd];
+    if (InstW.op == ADDI || InstW.op == SUBI || InstW.op == LW)
+        dest = &int_regs[InstW.rt];
+
+    if (InstW.op >= ADD && InstW.op <= SUB)
+        data = buffer->ALUOut;
+    if (InstW.op == LW)
+        data = buffer->ReadData;
+
+    if (dest != NULL) {
+        if (dest == int_regs + R0) {
+            printf("Exception: Attempt to overwrite R0");
+            exit(0);
+        }
+
+        *dest = data;
+    }
+
+    buffer->Result = data;
     inst_executed++;
-
-    /* if output register is R0, exit with error */
-    if (wrote_r0) {
-        printf("Exception: Attempt to overwrite R0 at PC=%d\n", PC);
-        exit(0);
-    }
 }
 
-
-/* Simulate one cycle of the DLX processor */
-void Simulate_DLX_cycle() {
-    /* ------------------------------ IF stage ------------------------------ */
-    Simulate_DLX_Fetch();
-
-    /* ------------------------------ ID stage ------------------------------ */
-    Simulate_DLX_Decode();
-
-    /* ------------------------------ EX stage ------------------------------ */
-    Simulate_DLX_Execute();
-
-    /* ------------------------------ MEM stage ----------------------------- */
-    Simulate_DLX_Memory();
-
-    /* ------------------------------ WB stage ------------------------------ */
-    Simulate_DLX_Writeback();
+void simulate_cycle(cpu_state *state) {
+    // Simulate each pipeline stage every cycle.
+    // This is done in reverse to ensure that each
+    // stage's change to the state of the processor
+    // only affects it after the current cycle ends.
+    simulate_writeback(state);
+    simulate_memory(state);
+    simulate_execute(state);
+    simulate_decode(state);
+    simulate_fetch(state);
 }
 
 
@@ -138,17 +203,17 @@ int main(int argc, char **argv) {
 
     /* set initial simulator values */
     cycle = 0;                /* simulator cycle count */
-    PC = 0;                   /* first instruction to execute from inst mem */
     int_regs[R0] = 0;         /* register R0 is alway zero */
     inst_executed = 0;
 
+    cpu_state state = {};
+
     /* Main simulator loop */
-    while (PC != code_length) {
-        Simulate_DLX_cycle();      /* simulate one cycle */
-        PC = NPC;                    /* update PC          */
+    while (state.fetch.PC != code_length) {
+        simulate_cycle(&state);      /* simulate one cycle */
         cycle += 1;                  /* update cycle count */
 
-        /* check if simuator is stuck in an infinite loop */
+        /* check if simulator is stuck in an infinite loop */
         if (cycle > FAIL_SAFE_LIMIT) {
             printf("\n\n *** Runaway program? (Program halted.) ***\n\n");
             break;
