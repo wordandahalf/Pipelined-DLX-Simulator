@@ -1,6 +1,7 @@
 #ifndef LAB1_GLOBALS_H
 #define LAB1_GLOBALS_H
 
+#define INVALID 0
 #define ADDI 100
 #define ADD  101
 #define SUBI 102

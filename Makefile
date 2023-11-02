@@ -18,7 +18,7 @@ test/*: $(OUTPUT)
 	@./$(OUTPUT) programs/$(@F) > test/.$(@F)
 	@$(CMP) test/.$(@F) test/$(@F)
 
-all: $(OUTPUT)
+all: clean $(OUTPUT)
 
 $(OUTPUT):  sim.c assemble.c globals.h
 	@$(CC) $(FILES) $(CFLAGS) $(LIBS) -o $(OUTPUT)

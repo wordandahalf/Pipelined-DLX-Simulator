@@ -9,47 +9,49 @@
 #include "globals.h"
 
 typedef enum {
-    none, memory, writeback
+    NONE, EXECUTE, MEMORY, WRITEBACK
 } forwarding;
 
 // State structures for each of the pipeline stages
 // TODO: throw struct defns in cpu_state
 
 typedef struct {
-    int PC, PCBranch;
-    bool PCSrc, StallF;
-} fetch_buffer;
+    struct fetch_state {
+        int PC, PCBranch;
+        bool StallF;
+    } fetch;
 
-typedef struct {
-    int PCPlus4D;
-    struct instruction InstD;
-    bool StallD;
-} decode_buffer;
+    struct decode_state {
+        int PCPlus4D;
+        struct instruction InstD;
+        bool StallD, PCSrc;
+        forwarding ForwardAD, ForwardBD;
+    } decode;
 
-typedef struct {
-    int A, B;
-    struct instruction InstE;
+    struct execute_state {
+        int A, B, ALUOut;
+        struct instruction InstE;
+        forwarding ForwardAE, ForwardBE;
+    } execute;
 
-    forwarding ForwardAE, ForwardBE;
-} execute_buffer;
+    struct memory_state {
+        int ALUOut, WriteData;
+        struct instruction Inst;
+    } memory;
 
-typedef struct {
-    int ALUOut, WriteData;
-    struct instruction Inst;
-} memory_buffer;
-
-typedef struct {
-    int ReadData, ALUOut, Result;
-    struct instruction Inst;
-} writeback_buffer;
-
-typedef struct {
-    fetch_buffer     fetch;
-    decode_buffer    decode;
-    execute_buffer   execute;
-    memory_buffer    memory;
-    writeback_buffer writeback;
+    struct writeback_state {
+        int ReadData, ALUOut, Result;
+        struct instruction Inst;
+    } writeback;
 } cpu_state;
+
+void dump_cpu_state(cpu_state state) {
+    printf("fetch{PC=%4d, PCBranch=%4d, StallF=%d}, ", state.fetch.PC, state.fetch.PCBranch, state.fetch.StallF);
+    printf("decode{InstD=%3d, PCPlus4D=%d, StallD=%d, PCSrc=%d, ForwardAD=%d, ForwardBD=%d}, ", state.decode.InstD.op, state.decode.PCPlus4D, state.decode.StallD, state.decode.PCSrc, state.decode.ForwardAD, state.decode.ForwardBD);
+    printf("execute{InstE=%3d, A=%3d, B=%3d, ForwardAE=%d, ForwardBE=%d} ", state.execute.InstE.op, state.execute.A, state.execute.B, state.execute.ForwardAE, state.execute.ForwardBE);
+    printf("memory{Inst=%3d, ALUOut=%3d, WriteData=%3d}, ", state.memory.Inst.op, state.memory.ALUOut, state.memory.WriteData);
+    printf("writeback{Inst=%3d, ALUOut=%3d, ReadData=%3d, Result=%3d}\n", state.writeback.Inst.op, state.writeback.ALUOut, state.writeback.ReadData, state.writeback.Result);
+}
 
 void simulate_fetch(cpu_state *state);
 void simulate_decode(cpu_state *state);
