@@ -10,10 +10,7 @@
 
 typedef enum {
     NONE, EXECUTE, MEMORY, WRITEBACK
-} forwarding;
-
-// State structures for each of the pipeline stages
-// TODO: throw struct defns in cpu_state
+} forwarding_source;
 
 typedef struct {
     struct fetch_state {
@@ -25,13 +22,13 @@ typedef struct {
         int PCPlus4D;
         struct instruction InstD;
         bool StallD, PCSrc;
-        forwarding ForwardAD, ForwardBD;
+        forwarding_source ForwardAD, ForwardBD;
     } decode;
 
     struct execute_state {
         int A, B, ALUOut;
         struct instruction InstE;
-        forwarding ForwardAE, ForwardBE;
+        forwarding_source ForwardAE, ForwardBE;
     } execute;
 
     struct memory_state {
