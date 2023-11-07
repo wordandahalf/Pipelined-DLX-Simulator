@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "processor.h"
+#include "debug.h"
 
 void pipeline_fetch(cpu_state *state) {
     struct fetch_state *fetch = &state->fetch;
@@ -213,7 +214,6 @@ void pipeline_writeback(cpu_state *state) {
             printf("Exception: Attempt to overwrite R0");
             exit(ERROR_ILLEGAL_REG_WRITE);
         }
-
         *dest = data;
     }
 
@@ -273,9 +273,8 @@ int main(int argc, char **argv) {
     }
 
     /* print final register values and simulator statistics */
-    printf("Final register file values:\n");
-    for (i = 0; i < 16; i += 4) {
-        printf("  R%-2d: %-10d  R%-2d: %-10d", i, state.register_file[i], i + 1, state.register_file[i + 1]);
-        printf("  R%-2d: %-10d  R%-2d: %-10d\n", i + 2, state.register_file[i + 2], i + 3, state.register_file[i + 3]);
-    }
+    printf("Registers:\n");
+    print_registers(&state);
+    printf("Memory:\n");
+    print_memory(&state);
 }
