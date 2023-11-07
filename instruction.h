@@ -60,6 +60,8 @@ alu_op instruction_get_alu_op(struct instruction instruction) {
     switch (instruction.op) {
         case ADDI:
         case ADD:
+        case LW:
+        case SW:
             return PLUS;
         case SUBI:
         case SUB:

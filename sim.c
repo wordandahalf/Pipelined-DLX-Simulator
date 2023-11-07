@@ -243,8 +243,6 @@ void simulate_cycle(cpu_state *state) {
 
 
 int main(int argc, char **argv) {
-    int i;
-
     if (argc != 2) {  /* Check command line inputs */
         printf("Usage: sim [program]\n");
         exit(0);
@@ -274,7 +272,8 @@ int main(int argc, char **argv) {
 
     /* print final register values and simulator statistics */
     printf("Registers:\n");
-    print_registers(&state);
+    print_registers(state.register_file);
+
     printf("Memory:\n");
-    print_memory(&state);
+    print_memory(state.data_memory);
 }
