@@ -1,5 +1,5 @@
 FILES = sim.c assemble.c
-TESTS = test/.1 test/.2 test/.3 test/.4 test/.5
+TEST_RESULTS = test/.1 test/.2 test/.3 test/.4 test/.5
 OUTPUT = sim
 
 CC = gcc
@@ -9,9 +9,9 @@ RM = rm
 CMP = cmp
 
 clean:
-	@$(RM) -f $(OUTPUT) $(TESTS)
+	@$(RM) -f $(OUTPUT) $(TEST_RESULTS)
 
-test: clean test/1 test/2 test/3 test/4 test/5
+test: clean test/*
 	@echo "Tests passed successfully."
 
 test/*: $(OUTPUT)
