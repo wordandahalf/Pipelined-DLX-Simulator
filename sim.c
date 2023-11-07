@@ -16,9 +16,18 @@ int inst_executed;                          // number of instr executed
 void simulate_fetch(cpu_state *state) {
     struct fetch_state *fetch = &state->fetch;
 
-    // Stall for a single cycle if requested
+    // Do nothing if stalling is requested
     if (fetch->StallF) {
         fetch->StallF = false;
+        return;
+    }
+
+    // Flush if requested
+    if (fetch->FlushF) {
+        printf("Flush requested!\n");
+        flush_instruction(&state->decode.InstD);
+        fetch->FlushF = false;
+        fetch->PC = fetch->PCBranch;
         return;
     }
 
@@ -39,7 +48,8 @@ void simulate_fetch(cpu_state *state) {
     state->decode.InstD = inst_mem[pc];
     state->decode.PCPlus4D = PCPlus4;
 
-    // Update the program counter for the next cycle
+    // Update the program counter for the next cycle.
+    // todo: flush if current PC is not equal to the pc branch?
     fetch->PC = state->decode.PCSrc ? fetch->PCBranch : PCPlus4;
 }
 
@@ -47,9 +57,12 @@ void simulate_decode(cpu_state *state) {
     struct decode_state *decode = &state->decode;
     const struct instruction InstrD = state->decode.InstD;
 
-    // If we are "empty", return
-    if (InstrD.op == INVALID)
+    // Inject a NOP into the execute stage when requested to stall.
+    if (decode->StallD) {
+        decode->StallD = false;
+        flush_instruction(&state->execute.InstE);
         return;
+    }
 
     // Stall for a single cycle if requested
     if (decode->StallD) {
@@ -57,35 +70,14 @@ void simulate_decode(cpu_state *state) {
         return;
     }
 
-    // TODO: Flush if PCSrc is high
     int Rd1, Rd2;
 
-    if (decode->ForwardAD == NONE)
-        Rd1 = decode->InstD.rs;
-    else if(decode->ForwardAD == EXECUTE)
-        Rd1 = state->execute.ALUOut;
-        // TODO: definitely should be ReadDataM
-    else if(decode->ForwardAD == MEMORY)
-        Rd1 = state->memory.ALUOut;
-    else if(decode->ForwardAD == WRITEBACK)
-        Rd1 = state->writeback.Result;
-
-    if (decode->ForwardBD == NONE)
-        Rd2 = decode->InstD.rs;
-    else if(decode->ForwardBD == EXECUTE)
-        Rd2 = state->execute.ALUOut;
-        // TODO: definitely should be ReadDataM
-    else if(decode->ForwardBD == MEMORY)
-        Rd2 = state->memory.ALUOut;
-    else if(decode->ForwardBD == WRITEBACK)
-        Rd2 = state->writeback.Result;
-
-    decode->ForwardAD = NONE;
-    decode->ForwardBD = NONE;
+    // Access register file
+    Rd1 = int_regs[InstrD.rs];
+    Rd2 = int_regs[InstrD.rt];
 
     // Resolve jump instructions
-    bool PCSrcD;
-
+    bool PCSrcD = false;
     switch (InstrD.op) {
         case BEQZ: PCSrcD = Rd1 == 0; break;
         case BNEZ: PCSrcD = Rd1 != 0; break;
@@ -93,7 +85,15 @@ void simulate_decode(cpu_state *state) {
     }
 
     decode->PCSrc = PCSrcD;
-    state->fetch.PCBranch = (InstrD.imm << 2) + decode->PCPlus4D;
+    state->fetch.FlushF = PCSrcD;
+
+    if (PCSrcD) {
+        printf("Immediate: %x\n", InstrD.imm);
+        printf("Target: %x\n", InstrD.imm + decode->PCPlus4D);
+    }
+
+    // Again, there should be a shift here, but since instruction memory, yadda yadda
+    state->fetch.PCBranch = InstrD.imm + decode->PCPlus4D;
 
     state->execute.InstE = InstrD;
     state->execute.A = Rd1;
@@ -104,28 +104,38 @@ void simulate_execute(cpu_state *state) {
     struct execute_state *execute = &state->execute;
     const struct instruction InstE = execute->InstE;
 
-    // If we are "empty", return
-    if (InstE.op == INVALID)
-        return;
-
     int WriteDataE;
     int SrcAE, SrcBE;
 
     if (execute->ForwardAE == NONE)
         SrcAE = execute->A;
     else if(execute->ForwardAE == MEMORY)
-        // TODO: definitely should be ReadDataM
         SrcAE = state->memory.ALUOut;
     else if(execute->ForwardAE == WRITEBACK)
         SrcAE = state->writeback.Result;
 
     if (execute->ForwardBE == NONE)
-        WriteDataE = execute->A;
+        WriteDataE = execute->B;
     else if(execute->ForwardBE == MEMORY)
-        // TODO: definitely should be ReadDataM
         WriteDataE = state->memory.ALUOut;
     else if(execute->ForwardBE == WRITEBACK)
         WriteDataE = state->writeback.Result;
+
+    // If we are writing to a register read in a jump instruction,
+    // tell the fetch and decode stages to stall and inject a NOP here.
+    const struct instruction InstD = state->decode.InstD;
+    if (InstD.op == BEQZ || InstD.op == BNEZ) {
+        if (get_register_read_after_write(state->decode.InstD, InstE) != NOT_USED) {
+            state->fetch.StallF = true;
+            state->decode.StallD = true;
+        }
+    }
+
+    if (execute->ForwardAE != NONE)
+        printf("Forwarded first operand from %d\n", execute->ForwardAE);
+
+    if (execute->ForwardBE != NONE)
+        printf("Forwarded second operand from %d\n", execute->ForwardBE);
 
     execute->ForwardAE = NONE;
     execute->ForwardBE = NONE;
@@ -139,15 +149,20 @@ void simulate_execute(cpu_state *state) {
 
     int ALUOut;
 
-    if (InstE.op == SUB || InstE.op == SUBI)
-        ALUOut = SrcAE - SrcBE;
-    else if(InstE.op == ADD || InstE.op == ADDI)
-        ALUOut = SrcAE + SrcBE;
-
-    if (InstE.rd != NOT_USED && InstE.rd == state->decode.InstD.rs)
-        state->decode.ForwardAD = EXECUTE;
-    if (InstE.rd != NOT_USED && InstE.rd == state->decode.InstD.rt)
-        state->decode.ForwardBD = EXECUTE;
+    switch (InstE.op) {
+        case SUBI:
+        case SUB:
+        case BEQZ:
+        case BNEZ:
+            ALUOut = SrcAE - SrcBE;
+            break;
+        case ADDI:
+        case ADD:
+        case LW:
+        case SW:
+            ALUOut = SrcAE + SrcBE;
+            break;
+    }
 
     state->memory.ALUOut = ALUOut;
     state->memory.WriteData = WriteDataE;
@@ -161,10 +176,6 @@ void simulate_memory(cpu_state *state) {
     const int ALUOutM = memory->ALUOut;
     const struct instruction InstM = memory->Inst;
 
-    // If we are "empty", return
-    if (InstM.op == INVALID)
-        return;
-
     if (InstM.op == LW || InstM.op == SW) {
         if (ALUOutM < 0 || ALUOutM >= MAX_WORDS_OF_DATA) {
             printf("Exception: out-of-bounds data memory access at %d\n", ALUOutM);
@@ -175,23 +186,30 @@ void simulate_memory(cpu_state *state) {
     switch (InstM.op) {
         case LW:
             state->writeback.ReadData = data_mem[ALUOutM];
+            printf("Read %d from %d\n", data_mem[ALUOutM], ALUOutM);
             break;
         case SW:
             data_mem[ALUOutM] = memory->WriteData;
+            printf("Wrote %d to %d\n", memory->WriteData, ALUOutM);
             break;
     }
 
-    // If we are writing to either operand of the instruction
-    // in the decode or execute stage, we need to forward!
-    if (InstM.op == SW) {
-        if (InstM.rd != NOT_USED && InstM.rd == state->decode.InstD.rs)
-            state->decode.ForwardAD = MEMORY;
-        if (InstM.rd != NOT_USED && InstM.rd == state->decode.InstD.rt)
-            state->decode.ForwardBD = MEMORY;
-        if (InstM.rd != NOT_USED && InstM.rd == state->execute.InstE.rs)
+    int hazard_register = get_register_read_after_write(state->execute.InstE, InstM);
+    if (hazard_register != NOT_USED) {
+        if (hazard_register == state->execute.InstE.rs)
             state->execute.ForwardAE = MEMORY;
-        if (InstM.rd != NOT_USED && InstM.rd == state->execute.InstE.rt)
+        if (hazard_register == state->execute.InstE.rt)
             state->execute.ForwardBE = MEMORY;
+    }
+
+    // If we are writing to a register read in a jump instruction,
+    // tell the fetch and decode stages to stall and inject a NOP here.
+    const struct instruction InstD = state->decode.InstD;
+    if (InstD.op == BEQZ || InstD.op == BNEZ) {
+        if (get_register_read_after_write(state->decode.InstD, InstM) != NOT_USED) {
+            state->fetch.StallF = true;
+            state->decode.StallD = true;
+        }
     }
 
     state->writeback.Inst = InstM;
@@ -202,12 +220,8 @@ void simulate_writeback(cpu_state *state) {
     struct writeback_state *writeback = &state->writeback;
     const struct instruction InstW = writeback->Inst;
 
-    // If we are "empty", return
-    if (InstW.op == INVALID)
-        return;
-
     int *dest = NULL;
-    int data;
+    int data = 0;
 
     if (InstW.op == ADD || InstW.op == SUB)
         dest = &int_regs[InstW.rd];
@@ -225,40 +239,42 @@ void simulate_writeback(cpu_state *state) {
             exit(0);
         }
 
+        printf("Writing data!\n");
         *dest = data;
     }
 
-    // If we are writing to either operand of the instruction
-    // in the decode or execute stage, we need to forward!
-    // TODO: broken because you are a dumb moron and forgot addi and subi write to rt, not rd.
-    if (InstW.rd != NOT_USED && InstW.rd == state->decode.InstD.rs)
-        state->decode.ForwardAD = WRITEBACK;
-    if (InstW.rd != NOT_USED && InstW.rd == state->decode.InstD.rt)
-        state->decode.ForwardBD = WRITEBACK;
-    if (InstW.rd != NOT_USED && InstW.rd == state->execute.InstE.rs)
-        state->execute.ForwardAE = WRITEBACK;
-    if (InstW.rd != NOT_USED && InstW.rd == state->execute.InstE.rt)
-        state->execute.ForwardBE = WRITEBACK;
+    int hazard_register = get_register_read_after_write(state->execute.InstE, InstW);
+    if (hazard_register != NOT_USED) {
+        if (hazard_register == state->execute.InstE.rs)
+            state->execute.ForwardAE = WRITEBACK;
+        if (hazard_register == state->execute.InstE.rt)
+            state->execute.ForwardBE = WRITEBACK;
+    }
 
     writeback->Result = data;
     inst_executed++;
 }
 
 void simulate_cycle(cpu_state *state) {
-    dump_cpu_state(*state);
-
     // Simulate each pipeline stage every cycle.
     // This is done in reverse to ensure that each
     // stage's change to the state of the processor
     // only affects it after the current cycle ends.
     simulate_writeback(state);
-    simulate_memory(state);
-    simulate_execute(state);
-    simulate_decode(state);
-    simulate_fetch(state);
+    dump_cpu_state(*state);
 
-    for (int i = 0; i < 16; i++)
-        printf("%3d ", int_regs[i]);
+    simulate_memory(state);
+    dump_cpu_state(*state);
+
+    simulate_execute(state);
+    dump_cpu_state(*state);
+
+    simulate_decode(state);
+    dump_cpu_state(*state);
+
+    simulate_fetch(state);
+    dump_cpu_state(*state);
+
     printf("\n");
 }
 
@@ -281,7 +297,7 @@ int main(int argc, char **argv) {
 
     cpu_state state = {};
 
-    /* Main simulator loop */
+    // Execute the simulator until the last instruction is fetched
     while (state.fetch.PC != code_length) {
         simulate_cycle(&state);      /* simulate one cycle */
         cycle += 1;                  /* update cycle count */

@@ -16,6 +16,7 @@ typedef struct {
     struct fetch_state {
         int PC, PCBranch;
         bool StallF;
+        bool FlushF;
     } fetch;
 
     struct decode_state {
@@ -55,5 +56,55 @@ void simulate_decode(cpu_state *state);
 void simulate_execute(cpu_state *state);
 void simulate_memory(cpu_state *state);
 void simulate_writeback(cpu_state *state);
+
+void flush_instruction(struct instruction *instruction) {
+    instruction->op = NOP;
+    instruction->rd = NOT_USED;
+    instruction->rt = NOT_USED;
+    instruction->rs = NOT_USED;
+    instruction->imm = 0;
+}
+
+/**
+ * @param instruction
+ * @return an integer indicating
+ */
+int get_output_register(struct instruction instruction) {
+    switch (instruction.op) {
+        case ADDI:
+        case SUBI:
+        case LW:
+            return instruction.rt;
+        case ADD:
+        case SUB:
+            return instruction.rd;
+        default:
+            return NOT_USED;
+    }
+}
+
+int get_register_read_after_write(struct instruction reader, struct instruction writer) {
+    int write_register = get_output_register(writer);
+
+    switch (reader.op) {
+        case ADD:
+        case SUB:
+        case LW:
+        case SW:
+            if (reader.rs == write_register) return reader.rs;
+            if (reader.rt == write_register) return reader.rt;
+            return NOT_USED;
+        case ADDI:
+        case SUBI:
+            if (reader.rt == write_register) return reader.rt;
+            return NOT_USED;
+        case BEQZ:
+        case BNEZ:
+            if (reader.rs == write_register) return reader.rs;
+            return NOT_USED;
+        default:
+            return NOT_USED;
+    }
+}
 
 #endif //LAB1_PIPELINE_H
