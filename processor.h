@@ -21,43 +21,43 @@ typedef struct {
     // Pipeline buffer for the fetch stage containing
     // persistent state related to the fetching of instructions
     // from instruction memory
-    struct fetch_state {
+    struct fetch_buffer {
         int PC, PCBranch;
         bool StallF;
         bool FlushF;
-    } fetch;
+    } fetch_buffer;
 
     // Pipeline buffer for the decode stage containing
     // persistent state related to the decoding of instructions
     // and resolution of jumps
-    struct decode_state {
+    struct decode_buffer {
         int PCPlus4D;
-        struct instruction InstD;
+        struct instruction instruction;
         bool StallD, PCSrc;
-    } decode;
+    } decode_buffer;
 
     // Pipeline buffer for the execute stage containing persistent
     // state related to the execution of instructions and
     // forwarding of known results
-    struct execute_state {
+    struct execute_buffer {
         int A, B, ALUOut;
-        struct instruction InstE;
+        struct instruction instruction;
         pipeline_forwarding_source ForwardAE, ForwardBE;
-    } execute;
+    } execute_buffer;
 
     // Pipeline buffer for the memory stage containing persistent
     // state related to the accessing of memory
-    struct memory_state {
+    struct memory_buffer {
         int ALUOut, WriteData;
-        struct instruction Inst;
-    } memory;
+        struct instruction instruction;
+    } memory_buffer;
 
     // Pipeline buffer for the writeback stage containing persistent
     // state related to the writing of results to the register file
-    struct writeback_state {
+    struct writeback_buffer {
         int ReadData, ALUOut, Result;
-        struct instruction Inst;
-    } writeback;
+        struct instruction instruction;
+    } writeback_buffer;
 
     // The instruction memory, directly containing parsed
     // instructions
