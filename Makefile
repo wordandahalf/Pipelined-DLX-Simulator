@@ -1,5 +1,5 @@
 FILES = sim.c assemble.c
-TEST_RESULTS = test/.1 test/.2 test/.3 test/.4 test/.5
+TEST_RESULTS = test/.1 test/.2 test/.3 test/.4 test/.5 test/.6
 OUTPUT = sim
 
 CC = gcc
