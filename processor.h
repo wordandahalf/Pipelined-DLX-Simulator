@@ -91,4 +91,34 @@ void pipeline_execute(cpu_state *state);
 void pipeline_memory(cpu_state *state);
 void pipeline_writeback(cpu_state *state);
 
+/**
+ * Stalls the decode and fetch stages if a RAW data hazard occurs
+ * @param state the processor state
+ * @param reader the instruction executing after writer
+ * @param writer the instruction executed before reader
+ */
+void processor_stall_on_hazard(cpu_state *state, struct instruction reader, struct instruction writer) {
+    if (instruction_get_register_read_after_write(reader, writer) != NOT_USED)
+        state->decode_buffer.StallD = true;
+}
+
+/**
+ * Instructs the execute stage to forward the necessary operands from the provided
+ * source when a RAW data hazard occurs.
+ * @param state the processor state
+ * @param reader the instruction executing after writer
+ * @param writer the instruction executed before reader
+ * @param source the source from which to forward
+ */
+void processor_forward_on_hazard(cpu_state *state, struct instruction reader, struct instruction writer,
+                                 pipeline_forwarding_source source) {
+    int hazard_register = instruction_get_register_read_after_write(reader, writer);
+    if (hazard_register != NOT_USED) {
+        if (hazard_register == reader.rs)
+            state->execute_buffer.ForwardAE = source;
+        else if (hazard_register == reader.rt)
+            state->execute_buffer.ForwardBE = source;
+    }
+}
+
 #endif //LAB1_PROCESSOR_H

@@ -64,6 +64,8 @@ void pipeline_decode(cpu_state *state) {
     // Inject a NOP into the execute stage when requested to stall.
     if (decode->StallD) {
         decode->StallD = false;
+
+        state->fetch_buffer.StallF = true;
         instruction_write_nop(&state->execute_buffer.instruction);
         return;
     }
@@ -117,14 +119,13 @@ void pipeline_execute(cpu_state *state) {
     else if(execute->ForwardBE == WRITEBACK)
         WriteDataE = state->writeback_buffer.Result;
 
-    // If we are writing to a register read in a jump instruction,
+    // If we are executing a LW instruction that writes to a register being read in the
+    // decode stage, the fetch and decode stages need to be stalled until the result is known.
+    // Additionally, if we are writing to a register read in a jump instruction,
     // tell the fetch and decode stages to stall and inject a NOP here.
     const struct instruction InstD = state->decode_buffer.instruction;
-    if (InstD.op == BEQZ || InstD.op == BNEZ) {
-        if (instruction_get_register_read_after_write(state->decode_buffer.instruction, InstE) != NOT_USED) {
-            state->fetch_buffer.StallF = true;
-            state->decode_buffer.StallD = true;
-        }
+    if (InstE.op == LW  || InstD.op == BEQZ || InstD.op == BNEZ) {
+        processor_stall_on_hazard(state, InstD, InstE);
     }
 
     execute->ForwardAE = NONE;
@@ -170,23 +171,16 @@ void pipeline_memory(cpu_state *state) {
             break;
     }
 
-    int hazard_register = instruction_get_register_read_after_write(state->execute_buffer.instruction, InstM);
-    if (hazard_register != NOT_USED) {
-        if (hazard_register == state->execute_buffer.instruction.rs)
-            state->execute_buffer.ForwardAE = MEMORY;
-        if (hazard_register == state->execute_buffer.instruction.rt)
-            state->execute_buffer.ForwardBE = MEMORY;
-    }
-
-    // If we are writing to a register read in a jump instruction,
+    // If we are executing a LW instruction that writes to a register being read in the
+    // decode stage, the fetch and decode stages need to be stalled until the result is known.
+    // Additionally, if we are writing to a register read in a jump instruction,
     // tell the fetch and decode stages to stall and inject a NOP here.
     const struct instruction InstD = state->decode_buffer.instruction;
-    if (InstD.op == BEQZ || InstD.op == BNEZ) {
-        if (instruction_get_register_read_after_write(state->decode_buffer.instruction, InstM) != NOT_USED) {
-            state->fetch_buffer.StallF = true;
-            state->decode_buffer.StallD = true;
-        }
+    if (InstM.op == LW  || InstD.op == BEQZ || InstD.op == BNEZ) {
+        processor_stall_on_hazard(state, InstD, InstM);
     }
+
+    processor_forward_on_hazard(state, state->execute_buffer.instruction, InstM, MEMORY);
 
     state->writeback_buffer.instruction = InstM;
     state->writeback_buffer.ALUOut = ALUOutM;
@@ -217,13 +211,7 @@ void pipeline_writeback(cpu_state *state) {
         *dest = data;
     }
 
-    int hazard_register = instruction_get_register_read_after_write(state->execute_buffer.instruction, InstW);
-    if (hazard_register != NOT_USED) {
-        if (hazard_register == state->execute_buffer.instruction.rs)
-            state->execute_buffer.ForwardAE = WRITEBACK;
-        if (hazard_register == state->execute_buffer.instruction.rt)
-            state->execute_buffer.ForwardBE = WRITEBACK;
-    }
+    processor_forward_on_hazard(state, state->execute_buffer.instruction, InstW, WRITEBACK);
 
     writeback->Result = data;
     state->instructions_executed++;
