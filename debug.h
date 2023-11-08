@@ -1,7 +1,3 @@
-//
-// Created by ryan on 11/7/23.
-//
-
 #ifndef LAB1_DEBUG_H
 #define LAB1_DEBUG_H
 
