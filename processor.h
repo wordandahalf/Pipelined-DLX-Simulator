@@ -116,7 +116,7 @@ void processor_forward_on_hazard(cpu_state *state, struct instruction reader, st
     if (hazard_register != NOT_USED) {
         if (hazard_register == reader.rs)
             state->execute_buffer.ForwardAE = source;
-        else if (hazard_register == reader.rt)
+        if (hazard_register == reader.rt)
             state->execute_buffer.ForwardBE = source;
     }
 }
