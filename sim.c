@@ -105,24 +105,20 @@ void pipeline_execute(cpu_state *state) {
 
     // Handle forwarding from the memory and writeback stages for
     // the two operands.
-    if (execute->ForwardAE == NONE)
-        SrcAE = execute->A;
-    else if(execute->ForwardAE == MEMORY)
+    if(execute->ForwardAE == MEMORY)
         SrcAE = state->memory_buffer.ALUOut;
     else if(execute->ForwardAE == WRITEBACK)
         SrcAE = state->writeback_buffer.Result;
 
-    if (execute->ForwardBE == NONE)
-        WriteDataE = execute->B;
-    else if(execute->ForwardBE == MEMORY)
+    if(execute->ForwardBE == MEMORY)
         WriteDataE = state->memory_buffer.ALUOut;
     else if(execute->ForwardBE == WRITEBACK)
         WriteDataE = state->writeback_buffer.Result;
 
     // If we are executing a LW instruction that writes to a register being read in the
-    // decode stage, the fetch and decode stages need to be stalled until the result is known.
-    // Additionally, if we are writing to a register read in a jump instruction,
-    // tell the fetch and decode stages to stall and inject a NOP here.
+    // decode stage, the fetch and decode stages need to be stalled until the result is known,
+    // after the memory stage. Similarly, if we are executing a BEQZ or BNEZ that causes a RAW
+    // hazard to occur, a stall must occur for the result of this operation to be forwardable.
     const struct instruction InstD = state->decode_buffer.instruction;
     if (InstE.op == LW  || InstD.op == BEQZ || InstD.op == BNEZ) {
         processor_stall_on_hazard(state, InstD, InstE);
@@ -171,10 +167,7 @@ void pipeline_memory(cpu_state *state) {
             break;
     }
 
-    // If we are executing a LW instruction that writes to a register being read in the
-    // decode stage, the fetch and decode stages need to be stalled until the result is known.
-    // Additionally, if we are writing to a register read in a jump instruction,
-    // tell the fetch and decode stages to stall and inject a NOP here.
+    // See lines 118-121.
     const struct instruction InstD = state->decode_buffer.instruction;
     if (InstM.op == LW  || InstD.op == BEQZ || InstD.op == BNEZ) {
         processor_stall_on_hazard(state, InstD, InstM);
