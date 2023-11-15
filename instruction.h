@@ -1,6 +1,7 @@
 #ifndef LAB1_INSTRUCTION_H
 #define LAB1_INSTRUCTION_H
 
+#include <stdbool.h>
 #include "globals.h"
 
 // An enumeration of the possible ALU operations an
@@ -9,16 +10,7 @@ typedef enum {
     UNDEFINED, PLUS, MINUS
 } alu_op;
 
-/**
- * @param instruction a pointer to an instruction into which to write a NOP.
- */
-void instruction_write_nop(struct instruction *instruction) {
-    instruction->op = NOP;
-    instruction->rd = NOT_USED;
-    instruction->rt = NOT_USED;
-    instruction->rs = NOT_USED;
-    instruction->imm = 0;
-}
+const struct instruction nop = { .op = NOP, .rd = NOT_USED, .rt = NOT_USED, .rs = NOT_USED, .imm = 0 };
 
 /**
  * @return the number of the register the provided instruction writes to. If the

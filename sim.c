@@ -16,7 +16,7 @@ void pipeline_fetch(cpu_state *state) {
     // Flush, if requested. This adds a NOP into the decode stage in order
     // to account for mispredicted jumps.
     if (fetch->FlushF) {
-        instruction_write_nop(&state->decode_buffer.instruction);
+        state->decode_buffer.instruction = nop;
         fetch->FlushF = false;
         fetch->PC = fetch->PCBranch;
         return;
@@ -34,7 +34,7 @@ void pipeline_fetch(cpu_state *state) {
             state->halt = true;
         } else {
             // Otherwise, we keep injecting NOPs.
-            instruction_write_nop(&state->decode_buffer.instruction);
+            state->decode_buffer.instruction = nop;
         }
     }
 
@@ -64,9 +64,8 @@ void pipeline_decode(cpu_state *state) {
     // Inject a NOP into the execute stage when requested to stall.
     if (decode->StallD) {
         decode->StallD = false;
-
         state->fetch_buffer.StallF = true;
-        instruction_write_nop(&state->execute_buffer.instruction);
+        state->execute_buffer.instruction = nop;
         return;
     }
 
