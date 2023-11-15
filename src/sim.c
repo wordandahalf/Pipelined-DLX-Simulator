@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "processor.h"
-#include "debug.h"
+#include "../include/processor.h"
+#include "../include/debug.h"
 
 void pipeline_fetch(cpu_state *state) {
     struct fetch_buffer *fetch = &state->fetch_buffer;

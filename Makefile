@@ -1,9 +1,9 @@
-FILES = sim.c assemble.c
+FILES = src/sim.c src/assemble.c
 TEST_RESULTS = test/.1 test/.2 test/.3 test/.4 test/.5 test/.6
 OUTPUT = sim
 
 CC = gcc
-CFLAGS = -g -w
+CFLAGS = -g -w -Iinclude/
 LIBS = -lm
 RM = rm
 CMP = cmp
@@ -20,5 +20,5 @@ test/*: $(OUTPUT)
 
 all: clean $(OUTPUT)
 
-$(OUTPUT):  sim.c assemble.c globals.h
+$(OUTPUT):  src/sim.c src/assemble.c include/globals.h
 	@$(CC) $(FILES) $(CFLAGS) $(LIBS) -o $(OUTPUT)

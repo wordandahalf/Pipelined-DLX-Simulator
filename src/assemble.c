@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <string.h>
-#include "globals.h"
+#include "../include/globals.h"
 
 #define DEBUG_ASSEMBLER 0
 
