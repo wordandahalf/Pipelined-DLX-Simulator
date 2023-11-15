@@ -7,13 +7,13 @@ void pipeline_fetch(cpu_state *state) {
     struct fetch_buffer *fetch = &state->fetch_buffer;
 
     // Do nothing if stalling is requested. The fetch stage always stalls
-    // alongside the decode_buffer stage, which handles injecting a NOP.
+    // alongside the decode_buffer stage, which handles injecting a NOP into the execute stage.
     if (fetch->StallF) {
         fetch->StallF = false;
         return;
     }
 
-    // Flush, if requested. This adds a NOP into the decode stage in order
+    // Flush if requested. This adds a NOP into the decode stage in order
     // to account for mispredicted jumps.
     if (fetch->FlushF) {
         state->decode_buffer.instruction = nop;
@@ -38,7 +38,7 @@ void pipeline_fetch(cpu_state *state) {
         }
     }
 
-    // The signal is called "PCPlus4" because in implementation, memory will
+    // The signal is called "PCPlus4" because in implementation memory will
     // be byte addressed. However, the instruction memory of this simulator
     // contains instruction structs directly, so it should be incremented
     // by 1.
@@ -61,7 +61,7 @@ void pipeline_decode(cpu_state *state) {
     struct decode_buffer *decode = &state->decode_buffer;
     const struct instruction InstrD = state->decode_buffer.instruction;
 
-    // Inject a NOP into the execute stage when requested to stall.
+    // Inject a NOP into the execute stage when requested to stall. Instruct the fetch stage to stall.
     if (decode->StallD) {
         decode->StallD = false;
         state->fetch_buffer.StallF = true;
@@ -115,7 +115,7 @@ void pipeline_execute(cpu_state *state) {
         WriteDataE = state->writeback_buffer.Result;
 
     // If we are executing a LW instruction that writes to a register being read in the
-    // decode stage, the fetch and decode stages need to be stalled until the result is known,
+    // decode stage, the fetch and decode stages need to be stalled until the result is known
     // after the memory stage. Similarly, if we are executing a BEQZ or BNEZ that causes a RAW
     // hazard to occur, a stall must occur for the result of this operation to be forwardable.
     const struct instruction InstD = state->decode_buffer.instruction;
@@ -157,6 +157,7 @@ void pipeline_memory(cpu_state *state) {
         }
     }
 
+    // Access memory
     switch (InstM.op) {
         case LW:
             state->writeback_buffer.ReadData = state->data_memory[ALUOutM];
