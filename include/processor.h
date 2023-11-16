@@ -15,7 +15,7 @@
 // forwarded
 typedef enum {
     NONE, MEMORY, WRITEBACK
-} pipeline_forwarding_source;
+} forwarding_source;
 
 typedef struct {
     // Pipeline buffer for the fetch stage containing
@@ -42,7 +42,8 @@ typedef struct {
     struct execute_buffer {
         int A, B, ALUOut;
         struct instruction instruction;
-        pipeline_forwarding_source ForwardAE, ForwardBE;
+        forwarding_source ForwardAE, ForwardBE;
+        bool StallE;
     } execute_buffer;
 
     // Pipeline buffer for the memory stage containing persistent
@@ -98,8 +99,10 @@ void pipeline_writeback(cpu_state *state);
  * @param writer the instruction executed before reader
  */
 void processor_stall_on_hazard(cpu_state *state, struct instruction reader, struct instruction writer) {
-    if (instruction_get_register_read_after_write(reader, writer) != NOT_USED)
+    if (instruction_get_register_read_after_write(reader, writer) != NOT_USED) {
         state->decode_buffer.StallD = true;
+        state->execute_buffer.StallE = true;
+    }
 }
 
 /**
@@ -111,7 +114,7 @@ void processor_stall_on_hazard(cpu_state *state, struct instruction reader, stru
  * @param source the source from which to forward
  */
 void processor_forward_on_hazard(cpu_state *state, struct instruction reader, struct instruction writer,
-                                 pipeline_forwarding_source source) {
+                                 forwarding_source source) {
     int hazard_register = instruction_get_register_read_after_write(reader, writer);
     if (hazard_register != NOT_USED) {
         if (hazard_register == reader.rs)

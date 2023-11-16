@@ -1,7 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "../include/processor.h"
-#include "../include/debug.h"
+#include <string.h>
+#include "processor.h"
+#include "debug.h"
 
 void pipeline_fetch(cpu_state *state) {
     struct fetch_buffer *fetch = &state->fetch_buffer;
@@ -224,15 +225,26 @@ void simulate_cycle(cpu_state *state) {
 
 
 int main(int argc, char **argv) {
-    if (argc != 2) {  /* Check command line inputs */
-        printf("Usage: sim [program]\n");
-        exit(0);
+    bool verbose;
+    char* program_name;
+
+    switch (argc) {
+        case 3:
+            verbose = (strcmp(argv[1], "-v") == 0);
+            program_name = argv[2];
+            break;
+        case 2:
+            program_name = argv[1];
+            break;
+        default:
+            printf("Usage: sim [args] [program]\n");
+            exit(0);
     }
 
     cpu_state state = {};
 
     /* assemble input program */
-    AssembleSimpleDLX(argv[1], state.instruction_memory, &state.instructions_count);
+    AssembleSimpleDLX(program_name, state.instruction_memory, &state.instructions_count);
 
     /* set initial simulator values */
     state.cycles_executed = 0;       /* simulator cycle count */
@@ -257,4 +269,9 @@ int main(int argc, char **argv) {
 
     printf("Memory:\n");
     print_memory(state.data_memory);
+
+    if (verbose) {
+        printf("Instructions: %d\n", state.instructions_executed);
+        printf("Cycles: %d\n", state.cycles_executed);
+   }
 }
