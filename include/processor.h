@@ -14,7 +14,7 @@
 // An enumeration of pipeline stages from which data can be
 // forwarded
 typedef enum {
-    NONE, MEMORY, WRITEBACK
+    NONE, EXECUTE, MEMORY, WRITEBACK
 } forwarding_source;
 
 typedef struct {
@@ -34,6 +34,8 @@ typedef struct {
         int PCPlus4D;
         struct instruction instruction;
         bool StallD, PCSrc;
+        bool Forward;
+        int data;
     } decode_buffer;
 
     // Pipeline buffer for the execute stage containing persistent
@@ -43,7 +45,6 @@ typedef struct {
         int A, B, ALUOut;
         struct instruction instruction;
         forwarding_source ForwardAE, ForwardBE;
-        bool StallE;
     } execute_buffer;
 
     // Pipeline buffer for the memory stage containing persistent
@@ -101,7 +102,6 @@ void pipeline_writeback(cpu_state *state);
 void processor_stall_on_hazard(cpu_state *state, struct instruction reader, struct instruction writer) {
     if (instruction_get_register_read_after_write(reader, writer) != NOT_USED) {
         state->decode_buffer.StallD = true;
-        state->execute_buffer.StallE = true;
     }
 }
 
@@ -113,14 +113,14 @@ void processor_stall_on_hazard(cpu_state *state, struct instruction reader, stru
  * @param writer the instruction executed before reader
  * @param source the source from which to forward
  */
-void processor_forward_on_hazard(cpu_state *state, struct instruction reader, struct instruction writer,
+void processor_forward_on_hazard(forwarding_source *stage, struct instruction reader, struct instruction writer,
                                  forwarding_source source) {
     int hazard_register = instruction_get_register_read_after_write(reader, writer);
     if (hazard_register != NOT_USED) {
         if (hazard_register == reader.rs)
-            state->execute_buffer.ForwardAE = source;
+            *stage = source;
         if (hazard_register == reader.rt)
-            state->execute_buffer.ForwardBE = source;
+            *(stage + 1) = source;
     }
 }
 

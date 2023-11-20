@@ -72,9 +72,16 @@ void pipeline_decode(cpu_state *state) {
 
     int Rd1, Rd2;
 
+    printf("%d %d %d %d\n", InstrD.op, InstrD.rs, InstrD.rt, InstrD.rd);
+
     // Access register file
-    Rd1 = state->register_file[InstrD.rs];
+    Rd1 = decode->Forward ? decode->data : state->register_file[InstrD.rs];
+    if (decode->Forward)
+        if (InstrD.op == BEQZ || InstrD.op == BNEZ)
+            printf("Got %d\n", decode->data);
+
     Rd2 = state->register_file[InstrD.rt];
+    decode->Forward = false;
 
     // Resolve jump instructions
     bool PCSrcD = false;
@@ -140,6 +147,19 @@ void pipeline_execute(cpu_state *state) {
             break;
     }
 
+    if (state->decode_buffer.instruction.op == BEQZ || state->decode_buffer.instruction.op == BNEZ) {
+        printf("Decode has branch\n");
+        if (instruction_get_output_register(InstE) != NOT_USED) {
+            printf("Instruction writes (%d)\n", InstE.op);
+            if (instruction_get_register_read_after_write(state->decode_buffer.instruction, InstE)) {
+                printf("Read after write: %d\n", instruction_get_output_register(InstE));
+                state->decode_buffer.Forward = true;
+                state->decode_buffer.data = ALUOut;
+                printf("forwarding to decode: %d\n", ALUOut);
+            }
+        }
+    }
+
     state->memory_buffer.ALUOut = ALUOut;
     state->memory_buffer.WriteData = WriteDataE;
     state->memory_buffer.instruction = InstE;
@@ -154,6 +174,7 @@ void pipeline_memory(cpu_state *state) {
     if (InstM.op == LW || InstM.op == SW) {
         if (ALUOutM < 0 || ALUOutM >= MAX_WORDS_OF_DATA) {
             printf("Exception: out-of-bounds data memory access at %d\n", ALUOutM);
+            printf("Instruction: %d %d %d %d\n", InstM.op, InstM.rs, InstM.rt, InstM.rd);
             exit(ERROR_ILLEGAL_MEM_ACCESS);
         }
     }
@@ -170,11 +191,12 @@ void pipeline_memory(cpu_state *state) {
 
     // See lines 118-121.
     const struct instruction InstD = state->decode_buffer.instruction;
-    if (InstM.op == LW  || InstD.op == BEQZ || InstD.op == BNEZ) {
+    if (InstM.op == LW) {
         processor_stall_on_hazard(state, InstD, InstM);
     }
 
-    processor_forward_on_hazard(state, state->execute_buffer.instruction, InstM, MEMORY);
+    processor_forward_on_hazard(&state->execute_buffer.ForwardAE,
+                                state->execute_buffer.instruction, InstM, MEMORY);
 
     state->writeback_buffer.instruction = InstM;
     state->writeback_buffer.ALUOut = ALUOutM;
@@ -205,10 +227,16 @@ void pipeline_writeback(cpu_state *state) {
         *dest = data;
     }
 
-    processor_forward_on_hazard(state, state->execute_buffer.instruction, InstW, WRITEBACK);
+    processor_forward_on_hazard(&state->execute_buffer.ForwardAE,
+                                state->execute_buffer.instruction, InstW, WRITEBACK);
 
     writeback->Result = data;
-    state->instructions_executed++;
+
+    // Only increment counter if the instruction executed was not a NOP
+    if (InstW.op != nop.op) {
+        state->instructions_executed++;
+        printf("Writeback for %d\n", InstW.op);
+    }
 }
 
 void simulate_cycle(cpu_state *state) {
