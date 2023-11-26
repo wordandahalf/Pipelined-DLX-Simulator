@@ -253,19 +253,21 @@ void simulate_cycle(cpu_state *state) {
 
 
 int main(int argc, char **argv) {
-    bool verbose;
+    bool debug;
     char* program_name;
 
     switch (argc) {
         case 3:
-            verbose = (strcmp(argv[1], "-v") == 0);
+            debug = (strcmp(argv[1], "-D") == 0);
             program_name = argv[2];
             break;
         case 2:
             program_name = argv[1];
             break;
         default:
-            printf("Usage: sim [args] [program]\n");
+            printf("Usage: sim [args] [program]\n\n");
+            printf("Arguments:\n");
+            printf("\t-D\toutput additional information about simulator state\n");
             exit(0);
     }
 
@@ -291,15 +293,21 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* print final register values and simulator statistics */
-    printf("Registers:\n");
-    print_registers(state.register_file);
-
-    printf("Memory:\n");
-    print_memory(state.data_memory);
-
-    if (verbose) {
+    if (debug) {
+        printf("Registers:\n");
+        print_registers(state.register_file);
+        printf("Memory:\n");
+        print_memory(state.data_memory);
         printf("Instructions: %d\n", state.instructions_executed);
         printf("Cycles: %d\n", state.cycles_executed);
-   }
+   } else {
+        printf("Final register file values:\n");
+        for (int i = 0; i < 16; i += 4) {
+            printf("  R%-2d: %-10d  R%-2d: %-10d", i, state.register_file[i], i + 1, state.register_file[i + 1]);
+            printf("  R%-2d: %-10d  R%-2d: %-10d\n", i + 2, state.register_file[i + 2], i + 3, state.register_file[i + 3]);
+        }
+        printf("\nCycles executed: %d\n", state.cycles_executed);
+        printf("IPC:  %6.3f\n", (float) state.instructions_executed / (float) state.cycles_executed);
+        printf("CPI:  %6.3f\n", (float) state.cycles_executed / (float) state.instructions_executed);
+    }
 }

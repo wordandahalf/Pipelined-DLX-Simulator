@@ -15,7 +15,7 @@ test: clean test/*
 	@echo "Tests passed successfully."
 
 test/*: $(OUTPUT)
-	@./$(OUTPUT) programs/$(@F) > test/.$(@F)
+	@./$(OUTPUT) -D programs/$(@F) > test/.$(@F)
 	@$(CMP) test/.$(@F) test/$(@F)
 
 all: clean $(OUTPUT)
