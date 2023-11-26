@@ -302,10 +302,7 @@ int main(int argc, char **argv) {
         printf("Cycles: %d\n", state.cycles_executed);
    } else {
         printf("Final register file values:\n");
-        for (int i = 0; i < 16; i += 4) {
-            printf("  R%-2d: %-10d  R%-2d: %-10d", i, state.register_file[i], i + 1, state.register_file[i + 1]);
-            printf("  R%-2d: %-10d  R%-2d: %-10d\n", i + 2, state.register_file[i + 2], i + 3, state.register_file[i + 3]);
-        }
+        print_registers_original(state.register_file);
         printf("\nCycles executed: %d\n", state.cycles_executed);
         printf("IPC:  %6.3f\n", (float) state.instructions_executed / (float) state.cycles_executed);
         printf("CPI:  %6.3f\n", (float) state.cycles_executed / (float) state.instructions_executed);

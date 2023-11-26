@@ -25,4 +25,11 @@ void print_memory(int *data_memory) {
     }
 }
 
+void print_registers_original(int *register_file) {
+    for (int i = 0; i < 16; i += 4) {
+        printf("  R%-2d: %-10d  R%-2d: %-10d", i, register_file[i], i + 1, register_file[i + 1]);
+        printf("  R%-2d: %-10d  R%-2d: %-10d\n", i + 2, register_file[i + 2], i + 3, register_file[i + 3]);
+    }
+}
+
 #endif //LAB1_DEBUG_H
