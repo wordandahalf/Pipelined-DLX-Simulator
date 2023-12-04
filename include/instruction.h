@@ -75,9 +75,9 @@ int instruction_get_register_read_after_write(struct instruction reader, struct 
     if (write_register == NOT_USED)
         return NOT_USED;
 
-    printf("(???) writer register: R%d\n", write_register);
-    printf("(???) reader: %d %d %d %d\n", reader.op, reader.rs, reader.rt, reader.rd);
-    printf("(???) writer: %d %d %d %d\n", writer.op, writer.rs, writer.rt, writer.rd);
+//    printf("(???) writer register: R%d\n", write_register);
+//    printf("(???) reader: %d %d %d %d\n", reader.op, reader.rs, reader.rt, reader.rd);
+//    printf("(???) writer: %d %d %d %d\n", writer.op, writer.rs, writer.rt, writer.rd);
 
     switch (reader.op) {
         case ADD:
@@ -85,11 +85,11 @@ int instruction_get_register_read_after_write(struct instruction reader, struct 
         case LW:
         case SW:
             if (reader.rs == write_register) {
-                printf("R%d == R%d\n", reader.rs, write_register);
+//                printf("R%d == R%d\n", reader.rs, write_register);
                 return reader.rs;
             }
             if (reader.rt == write_register) {
-                printf("R%d == R%d\n", reader.rt, write_register);
+//                printf("R%d == R%d\n", reader.rt, write_register);
                 return reader.rt;
             }
             return NOT_USED;
@@ -98,7 +98,7 @@ int instruction_get_register_read_after_write(struct instruction reader, struct 
         case BEQZ:
         case BNEZ:
             if (reader.rs == write_register) {
-                printf("R%d == R%d\n", reader.rs, write_register);
+//                printf("R%d == R%d\n", reader.rs, write_register);
                 return reader.rs;
             }
             return NOT_USED;
