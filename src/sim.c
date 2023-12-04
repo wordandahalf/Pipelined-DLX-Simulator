@@ -9,21 +9,21 @@ void pipeline_fetch(cpu_state *state) {
 
     // Do nothing if stalling is requested. The fetch stage always stalls
     // alongside the decode_buffer stage, which handles injecting a NOP into the execute stage.
-    if (fetch->StallF) {
-        fetch->StallF = false;
+    if (fetch->stall) {
+        fetch->stall = false;
         return;
     }
 
     // Flush if requested. This adds a NOP into the decode stage in order
     // to account for mispredicted jumps.
-    if (fetch->FlushF) {
-        state->decode_buffer.instruction = nop;
-        fetch->FlushF = false;
-        fetch->PC = fetch->PCBranch;
+    if (fetch->flush) {
+        state->decode_buffer.inst = nop;
+        fetch->flush = false;
+        fetch->pc = fetch->pc_branch;
         return;
     }
 
-    const int pc = fetch->PC;
+    const int pc = fetch->pc;
 
     // A pipelined processor is not done executing until the last instruction reaches the writeback stage.
     // To facilitate this, we fill the pipeline with NOPs when accessing out-of-bounds instructions not caused
@@ -35,7 +35,7 @@ void pipeline_fetch(cpu_state *state) {
             state->halt = true;
         } else {
             // Otherwise, we keep injecting NOPs.
-            state->decode_buffer.instruction = nop;
+            state->decode_buffer.inst = nop;
         }
     }
 
@@ -43,195 +43,165 @@ void pipeline_fetch(cpu_state *state) {
     // be byte addressed. However, the instruction memory of this simulator
     // contains instruction structs directly, so it should be incremented
     // by 1.
-    const int PCPlus4 = fetch->PC + 1;
+    const int PCPlus4 = fetch->pc + 1;
 
-    // increment PC once before stall, then do not continue to increment
-
-    state->decode_buffer.instruction = state->instruction_memory[pc];
-    state->decode_buffer.PCPlus4D = PCPlus4;
+    state->decode_buffer.inst = state->instruction_memory[pc];
+    state->decode_buffer.pc_next = PCPlus4;
 
     // Update the program counter for the next cycle. If we are jumping to an out-of-bounds address,
     // halt the simulator with an error.
-    if (state->decode_buffer.PCSrc && (fetch->PCBranch < 0 || fetch->PCBranch > state->instructions_count - 1)) {
-        printf("out-of-bounds jump to %d\n", fetch->PCBranch);
+    if (state->decode_buffer.pc_source && (fetch->pc_branch < 0 || fetch->pc_branch > state->instructions_count - 1)) {
+        printf("out-of-bounds jump to %d\n", fetch->pc_branch);
         exit(ERROR_ILLEGAL_JUMP);
     }
 
-    fetch->PC = state->decode_buffer.PCSrc ? fetch->PCBranch : PCPlus4;
+    fetch->pc = state->decode_buffer.pc_source ? fetch->pc_branch : PCPlus4;
 }
 
 void pipeline_decode(cpu_state *state) {
     struct decode_buffer *decode = &state->decode_buffer;
-    const struct instruction InstrD = state->decode_buffer.instruction;
+    const struct instruction inst = state->decode_buffer.inst;
 
     // Inject a NOP into the execute stage when requested to stall. Instruct the fetch stage to stall.
-    if (decode->StallD) {
-        decode->StallD = false;
-
-        state->fetch_buffer.StallF = true;
-
-        state->execute_buffer.instruction = nop;
+    if (decode->stall) {
+        decode->stall = false;
+        state->fetch_buffer.stall = true;
+        state->execute_buffer.inst = nop;
         return;
     }
 
-    int Rd1, Rd2;
+    int a, b;
 
     // Access register file
-    Rd1 = decode->Forward ? decode->data : state->register_file[InstrD.rs];
+    a = decode->forward ? decode->data : state->register_file[inst.rs];
 
-    Rd2 = state->register_file[InstrD.rt];
-    decode->Forward = false;
+    b = state->register_file[inst.rt];
+    decode->forward = false;
 
     // Resolve jump instructions
-    bool PCSrcD = false;
-    switch (InstrD.op) {
+    bool should_jump = false;
+    switch (inst.op) {
         case BEQZ:
-            PCSrcD = Rd1 == 0;
+            should_jump = a == 0;
             break;
         case BNEZ:
-            PCSrcD = Rd1 != 0;
+            should_jump = a != 0;
             break;
         case J:
-            PCSrcD = 1;
+            should_jump = true;
             break;
     }
 
-    decode->PCSrc = PCSrcD;
-    state->fetch_buffer.FlushF = PCSrcD;
+    decode->pc_source = should_jump;
+    state->fetch_buffer.flush = should_jump;
 
     // Again, there should be a shift here, but since instruction memory is not byte-addressed,
     // it is omitted.
-    state->fetch_buffer.PCBranch = InstrD.imm + decode->PCPlus4D;
+    state->fetch_buffer.pc_branch = inst.imm + decode->pc_next;
 
-    state->execute_buffer.instruction = InstrD;
-    state->execute_buffer.A = Rd1;
-    state->execute_buffer.B = Rd2;
+    state->execute_buffer.inst = inst;
+    state->execute_buffer.a = a;
+    state->execute_buffer.b = b;
 }
 
 void pipeline_execute(cpu_state *state) {
     struct execute_buffer *execute = &state->execute_buffer;
-    const struct instruction InstE = execute->instruction;
+    const struct instruction inst = execute->inst;
 
-    int SrcAE = execute->A;
-    int WriteDataE = execute->B;
+    int a = execute->a;
+    int write_data = execute->b;
 
     // Handle forwarding from the memory and writeback stages for
     // the two operands.
-    if(execute->ForwardAE == MEMORY)
-        SrcAE = state->memory_buffer.instruction.op == LW ? state->writeback_buffer.ReadData : state->memory_buffer.ALUOut;
-    else if(execute->ForwardAE == WRITEBACK)
-        SrcAE = state->writeback_buffer.Result;
+    if(execute->foward_a == MEMORY)
+        a = instruction_get_memory_operation(state->memory_buffer.inst) == READ
+                ? state->writeback_buffer.read_data
+                : state->memory_buffer.alu_out;
+    else if(execute->foward_a == WRITEBACK)
+        a = state->writeback_buffer.result;
 
-    if(execute->ForwardBE == MEMORY)
-        WriteDataE = state->memory_buffer.instruction.op == LW ? state->writeback_buffer.ReadData : state->memory_buffer.ALUOut;
-    else if(execute->ForwardBE == WRITEBACK)
-        WriteDataE = state->writeback_buffer.Result;
+    if(execute->forward_b == MEMORY)
+        write_data = instruction_get_memory_operation(state->memory_buffer.inst) == READ
+                ? state->writeback_buffer.read_data
+                : state->memory_buffer.alu_out;
+    else if(execute->forward_b == WRITEBACK)
+        write_data = state->writeback_buffer.result;
 
-    // If we are executing a LW instruction that writes to a register being read in the
-    // decode stage, the fetch and decode stages need to be stalled until the result is known
-    // after the memory stage. Similarly, if we are executing a BEQZ or BNEZ that causes a RAW
-    // hazard to occur, a stall must occur for the result of this operation to be forwardable.
-    const struct instruction InstD = state->decode_buffer.instruction;
-    if (InstD.op == BEQZ || InstD.op == BNEZ) {
-        processor_stall_on_hazard(state, InstD, InstE);
+    execute->foward_a  = NO_FORWARDING;
+    execute->forward_b = NO_FORWARDING;
+
+    int b = instruction_has_immediate(inst) ? execute->inst.imm : write_data;
+
+    int alu_out = 0;
+
+    switch (instruction_get_alu_op(inst)) {
+        case PLUS:  alu_out = a + b; break;
+        case MINUS: alu_out = a - b; break;
     }
 
-    execute->ForwardAE = NONE;
-    execute->ForwardBE = NONE;
-
-    int SrcBE = instruction_has_immediate(InstE) ? execute->instruction.imm : WriteDataE;
-
-    int ALUOut = 0;
-
-    switch (instruction_get_alu_op(InstE)) {
-        case PLUS:
-            ALUOut = SrcAE + SrcBE;
-            break;
-        case MINUS:
-            ALUOut = SrcAE - SrcBE;
-            break;
+    if (instruction_is_branch(state->decode_buffer.inst)) {
+        processor_stall_on_hazard(state, state->decode_buffer.inst, inst);
     }
 
-    // We never forward the computed result of a LW instruction to a branch; it must stall
-    // until the LW instruction finishes the memory stage.
-    if (InstE.op != LW && state->decode_buffer.instruction.op == BEQZ || state->decode_buffer.instruction.op == BNEZ) {
-        if (instruction_get_output_register(InstE) != NOT_USED) {
-            if (instruction_get_register_read_after_write(state->decode_buffer.instruction, InstE) != NOT_USED) {
-                state->decode_buffer.Forward = true;
-                state->decode_buffer.data = ALUOut;
-            }
-        }
-    }
-
-    state->memory_buffer.ALUOut = ALUOut;
-    state->memory_buffer.WriteData = WriteDataE;
-    state->memory_buffer.instruction = InstE;
+    state->memory_buffer.alu_out = alu_out;
+    state->memory_buffer.write_data = write_data;
+    state->memory_buffer.inst = inst;
 }
 
 void pipeline_memory(cpu_state *state) {
     const struct memory_buffer *memory = &state->memory_buffer;
 
-    const int ALUOutM = memory->ALUOut;
-    int data = ALUOutM;
-    const struct instruction InstM = memory->instruction;
+    const int alu_out = memory->alu_out;
+    int data = alu_out;
+    const struct instruction inst = memory->inst;
+    const mem_op op = instruction_get_memory_operation(inst);
 
-    if (InstM.op == LW || InstM.op == SW) {
-        if (ALUOutM < 0 || ALUOutM >= MAX_WORDS_OF_DATA) {
-            printf("Exception: out-of-bounds data memory access at %d\n", ALUOutM);
+    if (op != NO_OPERATION) {
+        if (alu_out < 0 || alu_out >= MAX_WORDS_OF_DATA) {
+            printf("Exception: out-of-bounds data memory access at %d\n", alu_out);
             exit(ERROR_ILLEGAL_MEM_ACCESS);
         }
     }
 
-    // Access memory
-    switch (InstM.op) {
-        case LW:
-            data = state->data_memory[ALUOutM];
-            state->writeback_buffer.ReadData = state->data_memory[ALUOutM];
+    // Perform the necessary memory operation
+    switch (op) {
+        case READ:
+            data = state->data_memory[alu_out];
+            state->writeback_buffer.read_data = state->data_memory[alu_out];
+
+            // If we are reading from memory, we have to stall if either the execute or decode
+            // read from the register this access writes to
+            processor_stall_on_hazard(state, state->decode_buffer.inst, inst);
+            processor_stall_on_hazard(state, state->execute_buffer.inst, inst);
             break;
-        case SW:
-            state->data_memory[ALUOutM] = memory->WriteData;
+        case WRITE:
+            state->data_memory[alu_out] = memory->write_data;
             break;
     }
 
-    // See lines 118-121.
-    const struct instruction InstD = state->decode_buffer.instruction;
-    if (InstM.op == LW) {
-        processor_stall_on_hazard(state, InstD, InstM);
-        processor_stall_on_hazard(state, state->execute_buffer.instruction, InstM);
-    }
+    processor_forward_on_hazard(state, &state->execute_buffer.foward_a,
+                                state->execute_buffer.inst, inst, MEMORY, data);
 
-    processor_forward_on_hazard(&state->execute_buffer.ForwardAE,
-                                state->execute_buffer.instruction, InstM, MEMORY);
-
-    if (state->decode_buffer.instruction.op == BEQZ || state->decode_buffer.instruction.op == BNEZ) {
-        if (instruction_get_output_register(InstM) != NOT_USED) {
-            if (instruction_get_register_read_after_write(state->decode_buffer.instruction, InstM) != NOT_USED) {
-                state->decode_buffer.Forward = true;
-                state->decode_buffer.data = data;
-            }
-        }
-    }
-
-    state->writeback_buffer.instruction = InstM;
-    state->writeback_buffer.ALUOut = ALUOutM;
+    state->writeback_buffer.inst = inst;
+    state->writeback_buffer.alu_out = alu_out;
 }
 
 void pipeline_writeback(cpu_state *state) {
     struct writeback_buffer *writeback = &state->writeback_buffer;
-    const struct instruction InstW = writeback->instruction;
+    const struct instruction inst = writeback->inst;
 
     int *dest = NULL;
     int data = 0;
 
-    if (InstW.op == ADD || InstW.op == SUB)
-        dest = &state->register_file[InstW.rd];
-    if (InstW.op == ADDI || InstW.op == SUBI || InstW.op == LW)
-        dest = &state->register_file[InstW.rt];
+    if (inst.op == ADD || inst.op == SUB)
+        dest = &state->register_file[inst.rd];
+    if (inst.op == ADDI || inst.op == SUBI || inst.op == LW)
+        dest = &state->register_file[inst.rt];
 
-    if (InstW.op >= ADDI && InstW.op <= SUB)
-        data = writeback->ALUOut;
-    if (InstW.op == LW)
-        data = writeback->ReadData;
+    if (inst.op >= ADDI && inst.op <= SUB)
+        data = writeback->alu_out;
+    if (inst.op == LW)
+        data = writeback->read_data;
 
     if (dest != NULL) {
         if (dest == state->register_file + R0) {
@@ -242,22 +212,13 @@ void pipeline_writeback(cpu_state *state) {
         *dest = data;
     }
 
-    processor_forward_on_hazard(&state->execute_buffer.ForwardAE,
-                                state->execute_buffer.instruction, InstW, WRITEBACK);
+    processor_forward_on_hazard(state, &state->execute_buffer.foward_a,
+                                state->execute_buffer.inst, inst, WRITEBACK, data);
 
-    writeback->Result = data;
-
-    if (state->decode_buffer.instruction.op == BEQZ || state->decode_buffer.instruction.op == BNEZ) {
-        if (instruction_get_output_register(InstW) != NOT_USED) {
-            if (instruction_get_register_read_after_write(state->decode_buffer.instruction, InstW) != NOT_USED) {
-                state->decode_buffer.Forward = true;
-                state->decode_buffer.data = data;
-            }
-        }
-    }
+    writeback->result = data;
 
     // Only increment counter if the instruction executed was not a NOP
-    if (InstW.op != nop.op) {
+    if (inst.op != nop.op) {
         state->instructions_executed++;
     }
 }

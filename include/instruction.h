@@ -10,6 +10,10 @@ typedef enum {
     UNDEFINED, PLUS, MINUS
 } alu_op;
 
+typedef enum {
+    READ, WRITE, NO_OPERATION
+} mem_op;
+
 const struct instruction nop = { .op = NOP, .rd = NOT_USED, .rt = NOT_USED, .rs = NOT_USED, .imm = 0 };
 
 /**
@@ -45,6 +49,24 @@ bool instruction_has_immediate(struct instruction instruction) {
     }
 }
 
+mem_op instruction_get_memory_operation(struct instruction instruction) {
+    switch (instruction.op) {
+        case LW: return READ;
+        case SW: return WRITE;
+        default: return NO_OPERATION;
+    }
+}
+
+bool instruction_is_branch(struct instruction instruction) {
+    switch (instruction.op) {
+        case BEQZ:
+        case BNEZ:
+            return true;
+        default:
+            return false;
+    }
+}
+
 /**
  * @return the ALU operation the provided instruction encodes for.
  */
@@ -69,7 +91,7 @@ alu_op instruction_get_alu_op(struct instruction instruction) {
  * @return the number of the register that will encounter a read-after-write data hazard. If no RAW hazard
  * occurs, returns NOT_USED.
  */
-int instruction_get_register_read_after_write(struct instruction reader, struct instruction writer) {
+int instruction_get_reg_read_after_write(struct instruction reader, struct instruction writer) {
     int write_register = instruction_get_output_register(writer);
 
     if (write_register == NOT_USED)

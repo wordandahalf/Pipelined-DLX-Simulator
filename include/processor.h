@@ -14,7 +14,7 @@
 // An enumeration of pipeline stages from which data can be
 // forwarded
 typedef enum {
-    NONE, EXECUTE, MEMORY, WRITEBACK
+    NO_FORWARDING, MEMORY, WRITEBACK
 } forwarding_source;
 
 typedef struct {
@@ -22,19 +22,19 @@ typedef struct {
     // persistent state related to the fetching of instructions
     // from instruction memory
     struct fetch_buffer {
-        int PC, PCBranch;
-        bool StallF;
-        bool FlushF;
+        int pc, pc_branch;
+        bool stall;
+        bool flush;
     } fetch_buffer;
 
     // Pipeline buffer for the decode stage containing
     // persistent state related to the decoding of instructions
     // and resolution of jumps
     struct decode_buffer {
-        int PCPlus4D;
-        struct instruction instruction;
-        bool StallD, PCSrc;
-        bool Forward;
+        int pc_next;
+        struct instruction inst;
+        bool stall, pc_source;
+        bool forward;
         int data;
     } decode_buffer;
 
@@ -42,23 +42,23 @@ typedef struct {
     // state related to the execution of instructions and
     // forwarding of known results
     struct execute_buffer {
-        int A, B, ALUOut;
-        struct instruction instruction;
-        forwarding_source ForwardAE, ForwardBE;
+        int a, b, alu_out;
+        struct instruction inst;
+        forwarding_source foward_a, forward_b;
     } execute_buffer;
 
     // Pipeline buffer for the memory stage containing persistent
     // state related to the accessing of memory
     struct memory_buffer {
-        int ALUOut, WriteData;
-        struct instruction instruction;
+        int alu_out, write_data;
+        struct instruction inst;
     } memory_buffer;
 
     // Pipeline buffer for the writeback stage containing persistent
     // state related to the writing of results to the register file
     struct writeback_buffer {
-        int ReadData, ALUOut, Result;
-        struct instruction instruction;
+        int read_data, alu_out, result;
+        struct instruction inst;
     } writeback_buffer;
 
     // The instruction memory, directly containing parsed
@@ -100,8 +100,8 @@ void pipeline_writeback(cpu_state *state);
  * @param writer the instruction executed before reader
  */
 void processor_stall_on_hazard(cpu_state *state, struct instruction reader, struct instruction writer) {
-    if (instruction_get_register_read_after_write(reader, writer) != NOT_USED) {
-        state->decode_buffer.StallD = true;
+    if (instruction_get_reg_read_after_write(reader, writer) != NOT_USED) {
+        state->decode_buffer.stall = true;
     }
 }
 
@@ -113,14 +113,23 @@ void processor_stall_on_hazard(cpu_state *state, struct instruction reader, stru
  * @param writer the instruction executed before reader
  * @param source the source from which to forward
  */
-void processor_forward_on_hazard(forwarding_source *stage, struct instruction reader, struct instruction writer,
-                                 forwarding_source source) {
-    int hazard_register = instruction_get_register_read_after_write(reader, writer);
+void processor_forward_on_hazard(cpu_state *state, forwarding_source *stage, struct instruction reader,
+                                 struct instruction writer, forwarding_source source, int data) {
+    int hazard_register = instruction_get_reg_read_after_write(reader, writer);
     if (hazard_register != NOT_USED) {
         if (hazard_register == reader.rs)
             *stage = source;
         if (hazard_register == reader.rt)
             *(stage + 1) = source;
+    }
+
+    if (instruction_is_branch(state->decode_buffer.inst)) {
+        if (instruction_get_output_register(writer) != NOT_USED) {
+            if (instruction_get_reg_read_after_write(state->decode_buffer.inst, writer) != NOT_USED) {
+                state->decode_buffer.forward = true;
+                state->decode_buffer.data = data;
+            }
+        }
     }
 }
 
