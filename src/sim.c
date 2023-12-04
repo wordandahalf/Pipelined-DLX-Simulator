@@ -144,7 +144,7 @@ void pipeline_execute(cpu_state *state) {
     // after the memory stage. Similarly, if we are executing a BEQZ or BNEZ that causes a RAW
     // hazard to occur, a stall must occur for the result of this operation to be forwardable.
     const struct instruction InstD = state->decode_buffer.instruction;
-    if (InstE.op == LW  || InstD.op == BEQZ || InstD.op == BNEZ) {
+    if (InstD.op == BEQZ || InstD.op == BNEZ) {
         processor_stall_on_hazard(state, InstD, InstE);
     }
 
