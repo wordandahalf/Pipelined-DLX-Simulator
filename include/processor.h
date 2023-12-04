@@ -101,6 +101,9 @@ void pipeline_writeback(cpu_state *state);
  */
 void processor_stall_on_hazard(cpu_state *state, struct instruction reader, struct instruction writer) {
     if (instruction_get_register_read_after_write(reader, writer) != NOT_USED) {
+        printf("(???) Stalled decode (writer: %d %d %d %d, reader: %d %d %d %d)\n",
+               writer.op, writer.rs, writer.rt, writer.rd,
+               reader.op, reader.rs, reader.rt, reader.rd);
         state->decode_buffer.StallD = true;
     }
 }

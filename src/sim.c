@@ -10,6 +10,7 @@ void pipeline_fetch(cpu_state *state) {
     // Do nothing if stalling is requested. The fetch stage always stalls
     // alongside the decode_buffer stage, which handles injecting a NOP into the execute stage.
     if (fetch->StallF) {
+        printf("(IF) next: %d\n", fetch->PC + 1);
         fetch->StallF = false;
         return;
     }
@@ -45,6 +46,10 @@ void pipeline_fetch(cpu_state *state) {
     // by 1.
     const int PCPlus4 = fetch->PC + 1;
 
+    printf("(IF) next: %d\n", PCPlus4);
+
+    // increment PC once before stall, then do not continue to increment
+
     state->decode_buffer.instruction = state->instruction_memory[pc];
     state->decode_buffer.PCPlus4D = PCPlus4;
 
@@ -65,20 +70,24 @@ void pipeline_decode(cpu_state *state) {
     // Inject a NOP into the execute stage when requested to stall. Instruct the fetch stage to stall.
     if (decode->StallD) {
         decode->StallD = false;
+
         state->fetch_buffer.StallF = true;
+
+        printf("(ID) Stalled IF\n");
+
         state->execute_buffer.instruction = nop;
         return;
     }
 
     int Rd1, Rd2;
 
-    printf("%d %d %d %d\n", InstrD.op, InstrD.rs, InstrD.rt, InstrD.rd);
+    printf("(ID) %d %d %d %d\n", InstrD.op, InstrD.rs, InstrD.rt, InstrD.rd);
 
     // Access register file
     Rd1 = decode->Forward ? decode->data : state->register_file[InstrD.rs];
     if (decode->Forward)
         if (InstrD.op == BEQZ || InstrD.op == BNEZ)
-            printf("Got %d\n", decode->data);
+            printf("(ID) Got %d\n", decode->data);
 
     Rd2 = state->register_file[InstrD.rt];
     decode->Forward = false;
@@ -86,9 +95,17 @@ void pipeline_decode(cpu_state *state) {
     // Resolve jump instructions
     bool PCSrcD = false;
     switch (InstrD.op) {
-        case BEQZ: PCSrcD = Rd1 == 0; break;
-        case BNEZ: PCSrcD = Rd1 != 0; break;
-        case J:    PCSrcD = 1; break;
+        case BEQZ:
+            printf("(ID) BEQZ: R%d (%d) == 0?\n", InstrD.rs, Rd1);
+            PCSrcD = Rd1 == 0;
+            break;
+        case BNEZ:
+            printf("(ID) BNEZ: R%d (%d) != 0?\n", InstrD.rs, Rd1);
+            PCSrcD = Rd1 != 0;
+            break;
+        case J:
+            PCSrcD = 1;
+            break;
     }
 
     decode->PCSrc = PCSrcD;
@@ -147,19 +164,22 @@ void pipeline_execute(cpu_state *state) {
             break;
     }
 
-    if (state->decode_buffer.instruction.op == BEQZ || state->decode_buffer.instruction.op == BNEZ) {
-        printf("Decode has branch\n");
+    // We never forward the computed result of a LW instruction to a branch; it must stall
+    // until the LW instruction finishes the memory stage.
+    if (InstE.op != LW && state->decode_buffer.instruction.op == BEQZ || state->decode_buffer.instruction.op == BNEZ) {
+        printf("(EX) Decode has branch\n");
         if (instruction_get_output_register(InstE) != NOT_USED) {
-            printf("Instruction writes (%d)\n", InstE.op);
-            if (instruction_get_register_read_after_write(state->decode_buffer.instruction, InstE)) {
-                printf("Read after write: %d\n", instruction_get_output_register(InstE));
+            printf("(EX) Instruction writes (%d) to R%d\n", InstE.op, instruction_get_output_register(InstE));
+            if (instruction_get_register_read_after_write(state->decode_buffer.instruction, InstE) != NOT_USED) {
+                printf("(EX) Read after write: R%d\n", instruction_get_output_register(InstE));
                 state->decode_buffer.Forward = true;
                 state->decode_buffer.data = ALUOut;
-                printf("forwarding to decode: %d\n", ALUOut);
+                printf("(EX) forwarding to decode: %d\n", ALUOut);
             }
         }
     }
 
+    printf("(EX) %d %d %d %d\n", InstE.op, InstE.rs, InstE.rt, InstE.rd);
     state->memory_buffer.ALUOut = ALUOut;
     state->memory_buffer.WriteData = WriteDataE;
     state->memory_buffer.instruction = InstE;
@@ -169,6 +189,7 @@ void pipeline_memory(cpu_state *state) {
     const struct memory_buffer *memory = &state->memory_buffer;
 
     const int ALUOutM = memory->ALUOut;
+    int data = ALUOutM;
     const struct instruction InstM = memory->instruction;
 
     if (InstM.op == LW || InstM.op == SW) {
@@ -182,6 +203,7 @@ void pipeline_memory(cpu_state *state) {
     // Access memory
     switch (InstM.op) {
         case LW:
+            data = state->data_memory[ALUOutM];
             state->writeback_buffer.ReadData = state->data_memory[ALUOutM];
             break;
         case SW:
@@ -198,6 +220,20 @@ void pipeline_memory(cpu_state *state) {
     processor_forward_on_hazard(&state->execute_buffer.ForwardAE,
                                 state->execute_buffer.instruction, InstM, MEMORY);
 
+    if (state->decode_buffer.instruction.op == BEQZ || state->decode_buffer.instruction.op == BNEZ) {
+        printf("(MEM) Decode has branch\n");
+        if (instruction_get_output_register(InstM) != NOT_USED) {
+            printf("(MEM) Instruction writes (%d) to R%d\n", InstM.op, instruction_get_output_register(InstM));
+            if (instruction_get_register_read_after_write(state->decode_buffer.instruction, InstM) != NOT_USED) {
+                printf("(MEM) Read after write: R%d\n", instruction_get_output_register(InstM));
+                state->decode_buffer.Forward = true;
+                state->decode_buffer.data = data;
+                printf("(MEM) forwarding to decode: %d\n", data);
+            }
+        }
+    }
+
+    printf("(MEM) %d %d %d %d\n", InstM.op, InstM.rs, InstM.rt, InstM.rd);
     state->writeback_buffer.instruction = InstM;
     state->writeback_buffer.ALUOut = ALUOutM;
 }
@@ -232,14 +268,28 @@ void pipeline_writeback(cpu_state *state) {
 
     writeback->Result = data;
 
+    if (state->decode_buffer.instruction.op == BEQZ || state->decode_buffer.instruction.op == BNEZ) {
+        printf("(WB) Decode has branch\n");
+        if (instruction_get_output_register(InstW) != NOT_USED) {
+            printf("(WB) Instruction writes (%d) to R%d\n", InstW.op, instruction_get_output_register(InstW));
+            if (instruction_get_register_read_after_write(state->decode_buffer.instruction, InstW) != NOT_USED) {
+                printf("(WB) Read after write: R%d\n", instruction_get_output_register(InstW));
+                state->decode_buffer.Forward = true;
+                state->decode_buffer.data = data;
+                printf("(WB) forwarding to decode: %d\n", data);
+            }
+        }
+    }
+
     // Only increment counter if the instruction executed was not a NOP
     if (InstW.op != nop.op) {
         state->instructions_executed++;
-        printf("Writeback for %d\n", InstW.op);
+        printf("(WB) Writeback for %d (%d)\n", InstW.op, data);
     }
 }
 
 void simulate_cycle(cpu_state *state) {
+    printf("--- Cycle #%d ---\n", state->cycles_executed);
     // Simulate each pipeline stage every cycle.
     // This is done in reverse to ensure that each
     // stage's change to the state of the processor
