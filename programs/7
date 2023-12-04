@@ -1,0 +1,11 @@
+        ADDI    R4,R0,#2000
+        ADDI    R2,R0,#10
+        SW      100(R2),R8
+loop    ADDI    R1,R0,#4
+l1      SUBI    R1,R1,#1
+        LW      R8,10(R2)
+        ADDI    R9,R8,#10
+        SW      10(R2),R9
+        BNEZ    R1,l1
+        SUBI    R4,R4,#1
+        BNEZ    R4,loop

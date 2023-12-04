@@ -45,6 +45,8 @@ void pipeline_fetch(cpu_state *state) {
     // by 1.
     const int PCPlus4 = fetch->PC + 1;
 
+    // increment PC once before stall, then do not continue to increment
+
     state->decode_buffer.instruction = state->instruction_memory[pc];
     state->decode_buffer.PCPlus4D = PCPlus4;
 
@@ -65,7 +67,9 @@ void pipeline_decode(cpu_state *state) {
     // Inject a NOP into the execute stage when requested to stall. Instruct the fetch stage to stall.
     if (decode->StallD) {
         decode->StallD = false;
+
         state->fetch_buffer.StallF = true;
+
         state->execute_buffer.instruction = nop;
         return;
     }
@@ -73,15 +77,23 @@ void pipeline_decode(cpu_state *state) {
     int Rd1, Rd2;
 
     // Access register file
-    Rd1 = state->register_file[InstrD.rs];
+    Rd1 = decode->Forward ? decode->data : state->register_file[InstrD.rs];
+
     Rd2 = state->register_file[InstrD.rt];
+    decode->Forward = false;
 
     // Resolve jump instructions
     bool PCSrcD = false;
     switch (InstrD.op) {
-        case BEQZ: PCSrcD = Rd1 == 0; break;
-        case BNEZ: PCSrcD = Rd1 != 0; break;
-        case J:    PCSrcD = 1; break;
+        case BEQZ:
+            PCSrcD = Rd1 == 0;
+            break;
+        case BNEZ:
+            PCSrcD = Rd1 != 0;
+            break;
+        case J:
+            PCSrcD = 1;
+            break;
     }
 
     decode->PCSrc = PCSrcD;
@@ -106,12 +118,12 @@ void pipeline_execute(cpu_state *state) {
     // Handle forwarding from the memory and writeback stages for
     // the two operands.
     if(execute->ForwardAE == MEMORY)
-        SrcAE = state->memory_buffer.ALUOut;
+        SrcAE = state->memory_buffer.instruction.op == LW ? state->writeback_buffer.ReadData : state->memory_buffer.ALUOut;
     else if(execute->ForwardAE == WRITEBACK)
         SrcAE = state->writeback_buffer.Result;
 
     if(execute->ForwardBE == MEMORY)
-        WriteDataE = state->memory_buffer.ALUOut;
+        WriteDataE = state->memory_buffer.instruction.op == LW ? state->writeback_buffer.ReadData : state->memory_buffer.ALUOut;
     else if(execute->ForwardBE == WRITEBACK)
         WriteDataE = state->writeback_buffer.Result;
 
@@ -120,7 +132,7 @@ void pipeline_execute(cpu_state *state) {
     // after the memory stage. Similarly, if we are executing a BEQZ or BNEZ that causes a RAW
     // hazard to occur, a stall must occur for the result of this operation to be forwardable.
     const struct instruction InstD = state->decode_buffer.instruction;
-    if (InstE.op == LW  || InstD.op == BEQZ || InstD.op == BNEZ) {
+    if (InstD.op == BEQZ || InstD.op == BNEZ) {
         processor_stall_on_hazard(state, InstD, InstE);
     }
 
@@ -140,6 +152,17 @@ void pipeline_execute(cpu_state *state) {
             break;
     }
 
+    // We never forward the computed result of a LW instruction to a branch; it must stall
+    // until the LW instruction finishes the memory stage.
+    if (InstE.op != LW && state->decode_buffer.instruction.op == BEQZ || state->decode_buffer.instruction.op == BNEZ) {
+        if (instruction_get_output_register(InstE) != NOT_USED) {
+            if (instruction_get_register_read_after_write(state->decode_buffer.instruction, InstE) != NOT_USED) {
+                state->decode_buffer.Forward = true;
+                state->decode_buffer.data = ALUOut;
+            }
+        }
+    }
+
     state->memory_buffer.ALUOut = ALUOut;
     state->memory_buffer.WriteData = WriteDataE;
     state->memory_buffer.instruction = InstE;
@@ -149,6 +172,7 @@ void pipeline_memory(cpu_state *state) {
     const struct memory_buffer *memory = &state->memory_buffer;
 
     const int ALUOutM = memory->ALUOut;
+    int data = ALUOutM;
     const struct instruction InstM = memory->instruction;
 
     if (InstM.op == LW || InstM.op == SW) {
@@ -161,6 +185,7 @@ void pipeline_memory(cpu_state *state) {
     // Access memory
     switch (InstM.op) {
         case LW:
+            data = state->data_memory[ALUOutM];
             state->writeback_buffer.ReadData = state->data_memory[ALUOutM];
             break;
         case SW:
@@ -170,11 +195,22 @@ void pipeline_memory(cpu_state *state) {
 
     // See lines 118-121.
     const struct instruction InstD = state->decode_buffer.instruction;
-    if (InstM.op == LW  || InstD.op == BEQZ || InstD.op == BNEZ) {
+    if (InstM.op == LW) {
         processor_stall_on_hazard(state, InstD, InstM);
+        processor_stall_on_hazard(state, state->execute_buffer.instruction, InstM);
     }
 
-    processor_forward_on_hazard(state, state->execute_buffer.instruction, InstM, MEMORY);
+    processor_forward_on_hazard(&state->execute_buffer.ForwardAE,
+                                state->execute_buffer.instruction, InstM, MEMORY);
+
+    if (state->decode_buffer.instruction.op == BEQZ || state->decode_buffer.instruction.op == BNEZ) {
+        if (instruction_get_output_register(InstM) != NOT_USED) {
+            if (instruction_get_register_read_after_write(state->decode_buffer.instruction, InstM) != NOT_USED) {
+                state->decode_buffer.Forward = true;
+                state->decode_buffer.data = data;
+            }
+        }
+    }
 
     state->writeback_buffer.instruction = InstM;
     state->writeback_buffer.ALUOut = ALUOutM;
@@ -202,13 +238,28 @@ void pipeline_writeback(cpu_state *state) {
             printf("Exception: Attempt to overwrite R0");
             exit(ERROR_ILLEGAL_REG_WRITE);
         }
+
         *dest = data;
     }
 
-    processor_forward_on_hazard(state, state->execute_buffer.instruction, InstW, WRITEBACK);
+    processor_forward_on_hazard(&state->execute_buffer.ForwardAE,
+                                state->execute_buffer.instruction, InstW, WRITEBACK);
 
     writeback->Result = data;
-    state->instructions_executed++;
+
+    if (state->decode_buffer.instruction.op == BEQZ || state->decode_buffer.instruction.op == BNEZ) {
+        if (instruction_get_output_register(InstW) != NOT_USED) {
+            if (instruction_get_register_read_after_write(state->decode_buffer.instruction, InstW) != NOT_USED) {
+                state->decode_buffer.Forward = true;
+                state->decode_buffer.data = data;
+            }
+        }
+    }
+
+    // Only increment counter if the instruction executed was not a NOP
+    if (InstW.op != nop.op) {
+        state->instructions_executed++;
+    }
 }
 
 void simulate_cycle(cpu_state *state) {
@@ -225,19 +276,21 @@ void simulate_cycle(cpu_state *state) {
 
 
 int main(int argc, char **argv) {
-    bool verbose;
+    bool debug;
     char* program_name;
 
     switch (argc) {
         case 3:
-            verbose = (strcmp(argv[1], "-v") == 0);
+            debug = (strcmp(argv[1], "-D") == 0);
             program_name = argv[2];
             break;
         case 2:
             program_name = argv[1];
             break;
         default:
-            printf("Usage: sim [args] [program]\n");
+            printf("Usage: sim [args] [program]\n\n");
+            printf("Arguments:\n");
+            printf("\t-D\toutput additional information about simulator state\n");
             exit(0);
     }
 
@@ -263,15 +316,18 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* print final register values and simulator statistics */
-    printf("Registers:\n");
-    print_registers(state.register_file);
-
-    printf("Memory:\n");
-    print_memory(state.data_memory);
-
-    if (verbose) {
+    if (debug) {
+        printf("Registers:\n");
+        print_registers(state.register_file);
+        printf("Memory:\n");
+        print_memory(state.data_memory);
         printf("Instructions: %d\n", state.instructions_executed);
         printf("Cycles: %d\n", state.cycles_executed);
-   }
+   } else {
+        printf("Final register file values:\n");
+        print_registers_original(state.register_file);
+        printf("\nCycles executed: %d\n", state.cycles_executed);
+        printf("IPC:  %6.3f\n", (float) state.instructions_executed / (float) state.cycles_executed);
+        printf("CPI:  %6.3f\n", (float) state.cycles_executed / (float) state.instructions_executed);
+    }
 }
