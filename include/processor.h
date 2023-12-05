@@ -33,7 +33,7 @@ typedef struct {
     struct decode_buffer {
         int pc_next;
         struct instruction inst;
-        bool stall, pc_source;
+        bool stall, should_jump;
         bool forward;
         int data;
     } decode_buffer;

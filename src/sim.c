@@ -27,7 +27,7 @@ void pipeline_fetch(cpu_state *state) {
 
     // A pipelined processor is not done executing until the last instruction reaches the writeback stage.
     // To facilitate this, we fill the pipeline with NOPs when accessing out-of-bounds instructions not caused
-    // by a jump instruction (i.e., jumping out-of-bounds will still result in an error being thrown).
+    // by a should_jump instruction (i.e., jumping out-of-bounds will still result in an error being thrown).
     if (pc > state->instructions_count - 1) {
         // If the last instruction has reached the writeback stage, we should halt the processor. This occurs when
         // four additional instructions have been fetched by the processor.
@@ -39,23 +39,19 @@ void pipeline_fetch(cpu_state *state) {
         }
     }
 
-    // The signal is called "PCPlus4" because in implementation memory will
-    // be byte addressed. However, the instruction memory of this simulator
-    // contains instruction structs directly, so it should be incremented
-    // by 1.
-    const int PCPlus4 = fetch->pc + 1;
+    const int next_pc = fetch->pc + 1;
 
     state->decode_buffer.inst = state->instruction_memory[pc];
-    state->decode_buffer.pc_next = PCPlus4;
+    state->decode_buffer.pc_next = next_pc;
 
     // Update the program counter for the next cycle. If we are jumping to an out-of-bounds address,
     // halt the simulator with an error.
-    if (state->decode_buffer.pc_source && (fetch->pc_branch < 0 || fetch->pc_branch > state->instructions_count - 1)) {
-        printf("out-of-bounds jump to %d\n", fetch->pc_branch);
+    if (state->decode_buffer.should_jump && (fetch->pc_branch < 0 || fetch->pc_branch > state->instructions_count - 1)) {
+        printf("out-of-bounds should_jump to %d\n", fetch->pc_branch);
         exit(ERROR_ILLEGAL_JUMP);
     }
 
-    fetch->pc = state->decode_buffer.pc_source ? fetch->pc_branch : PCPlus4;
+    fetch->pc = state->decode_buffer.should_jump ? fetch->pc_branch : next_pc;
 }
 
 void pipeline_decode(cpu_state *state) {
@@ -72,13 +68,12 @@ void pipeline_decode(cpu_state *state) {
 
     int a, b;
 
-    // Access register file
+    // Access register file. Use the forwarded value for avoiding control hazards, if necessary.
     a = decode->forward ? decode->data : state->register_file[inst.rs];
-
     b = state->register_file[inst.rt];
     decode->forward = false;
 
-    // Resolve jump instructions
+    // Resolve should_jump instructions
     bool should_jump = false;
     switch (inst.op) {
         case BEQZ:
@@ -92,7 +87,7 @@ void pipeline_decode(cpu_state *state) {
             break;
     }
 
-    decode->pc_source = should_jump;
+    decode->should_jump = should_jump;
     state->fetch_buffer.flush = should_jump;
 
     // Again, there should be a shift here, but since instruction memory is not byte-addressed,
@@ -114,6 +109,8 @@ void pipeline_execute(cpu_state *state) {
     // Handle forwarding from the memory and writeback stages for
     // the two operands.
     if(execute->foward_a == MEMORY)
+        // If the instruction reads from memory, we want the value read from memory, not
+        // the calculated address.
         a = instruction_get_memory_operation(state->memory_buffer.inst) == READ
                 ? state->writeback_buffer.read_data
                 : state->memory_buffer.alu_out;
@@ -121,6 +118,7 @@ void pipeline_execute(cpu_state *state) {
         a = state->writeback_buffer.result;
 
     if(execute->forward_b == MEMORY)
+        // See above.
         write_data = instruction_get_memory_operation(state->memory_buffer.inst) == READ
                 ? state->writeback_buffer.read_data
                 : state->memory_buffer.alu_out;
@@ -139,6 +137,7 @@ void pipeline_execute(cpu_state *state) {
         case MINUS: alu_out = a - b; break;
     }
 
+    // We don't forward to avoid control hazards in the execute stage.
     if (instruction_is_branch(state->decode_buffer.inst)) {
         processor_stall_on_hazard(state, state->decode_buffer.inst, inst);
     }
@@ -156,6 +155,7 @@ void pipeline_memory(cpu_state *state) {
     const struct instruction inst = memory->inst;
     const mem_op op = instruction_get_memory_operation(inst);
 
+    // Validate the address to be accessed, if necessary.
     if (op != NO_OPERATION) {
         if (alu_out < 0 || alu_out >= MAX_WORDS_OF_DATA) {
             printf("Exception: out-of-bounds data memory access at %d\n", alu_out);
@@ -170,7 +170,7 @@ void pipeline_memory(cpu_state *state) {
             state->writeback_buffer.read_data = state->data_memory[alu_out];
 
             // If we are reading from memory, we have to stall if either the execute or decode
-            // read from the register this access writes to
+            // read from the register this operation writes to
             processor_stall_on_hazard(state, state->decode_buffer.inst, inst);
             processor_stall_on_hazard(state, state->execute_buffer.inst, inst);
             break;
